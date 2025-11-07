@@ -3,7 +3,7 @@ import os
 import zipfile
 import tempfile
 from pathlib import Path
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 import numpy as np
 import torch
 import torchvision.transforms as transforms
@@ -42,15 +42,28 @@ def extract_features(image):
         features = model(input_tensor)
     return features.squeeze().numpy().astype("float32")
 
+# --- Helper: safe image open ---
+def safe_open_image(path):
+    try:
+        image = Image.open(path)
+        image = image.convert("RGB")
+        image.thumbnail((512, 512))  # downscale large images for performance
+        return image
+    except UnidentifiedImageError:
+        st.warning(f"⚠️ Skipping {os.path.basename(path)}: not a valid image.")
+        return None
+    except Exception as e:
+        st.warning(f"⚠️ Skipping {os.path.basename(path)}: {e}")
+        return None
+
 # --- Image analysis metrics ---
 def analyze_similarity_metrics(img1, img2):
-    """Compute interpretable metrics comparing two images."""
     img1_gray = ImageOps.grayscale(img1).resize((224, 224))
     img2_gray = ImageOps.grayscale(img2).resize((224, 224))
     a = np.array(img1_gray)
     b = np.array(img2_gray)
 
-    # Color similarity (cosine similarity of mean RGB)
+    # Color similarity
     c1 = np.mean(np.array(img1).reshape(-1, 3), axis=0)
     c2 = np.mean(np.array(img2).reshape(-1, 3), axis=0)
     color_sim = np.dot(c1, c2) / (np.linalg.norm(c1) * np.linalg.norm(c2) + 1e-6)
@@ -63,26 +76,29 @@ def analyze_similarity_metrics(img1, img2):
     # Brightness similarity
     bright_sim = 1 - abs(a.mean() - b.mean()) / 255.0
 
-    # Edge similarity (Sobel + Pearson correlation)
+    # Edge similarity
     edge1 = cv2.Sobel(a, cv2.CV_64F, 1, 1, ksize=3)
     edge2 = cv2.Sobel(b, cv2.CV_64F, 1, 1, ksize=3)
     edge_sim = pearsonr(edge1.flatten(), edge2.flatten())[0] if np.std(edge1) and np.std(edge2) else 0
 
-    # Pattern similarity (FFT correlation)
+    # Pattern similarity
     fft1 = np.abs(fft2(a))
     fft2v = np.abs(fft2(b))
     fft_sim = pearsonr(fft1.flatten(), fft2v.flatten())[0] if np.std(fft1) and np.std(fft2v) else 0
 
-    return {
-        "color": color_sim,
-        "texture": tex_sim,
-        "brightness": bright_sim,
-        "edges": edge_sim,
-        "pattern": fft_sim
+    # Normalize metrics to 0–1
+    def norm(v): return (v + 1) / 2 if isinstance(v, (int, float)) else 0.5
+    metrics = {
+        "color": norm(color_sim),
+        "texture": norm(tex_sim),
+        "brightness": norm(bright_sim),
+        "edges": norm(edge_sim),
+        "pattern": norm(fft_sim)
     }
+    return metrics
 
 def describe_metrics(metrics):
-    """Generate short technical-style description based on strongest metrics."""
+    """Generate concise technical-style descriptions."""
     key_metrics = sorted(metrics.items(), key=lambda x: x[1], reverse=True)[:2]
     descriptors = {
         "color": "shared chromatic distribution and hue alignment",
@@ -95,13 +111,13 @@ def describe_metrics(metrics):
     return f"Technical analysis indicates {desc}."
 
 def plot_metrics(metrics):
-    """Return a minimalist bar chart visualization of metric scores."""
+    """Compact minimalist bar chart visualization of metrics."""
     fig, ax = plt.subplots(figsize=(4.8, 1.8))
     names = list(metrics.keys())
     values = [max(0, v) for v in metrics.values()]
-    bars = ax.barh(names, values, color="#BBBBBB", edgecolor="#555555", height=0.4)
+    bars = ax.barh(names, values, color="#BBBBBB", edgecolor="#444444", height=0.4)
     ax.set_xlim(0, 1)
-    ax.set_xlabel("Similarity", fontsize=8, labelpad=4)
+    ax.set_xlabel("Similarity", fontsize=8)
     ax.tick_params(axis="both", labelsize=8)
     ax.set_title("Metric Breakdown", fontsize=9, pad=5)
     ax.grid(False)
@@ -122,14 +138,18 @@ if ref_zip:
         zip_ref.extractall(temp_dir)
     ref_folder = temp_dir
 
-    image_extensions = {".jpg", ".jpeg", ".png"}
-    ref_image_files = [p for p in Path(ref_folder).rglob("*") if p.suffix.lower() in image_extensions]
+    # Collect only valid image files recursively
+    valid_ext = {".jpg", ".jpeg", ".png", ".bmp", ".tiff"}
+    ref_image_files = [
+        p for p in Path(ref_folder).rglob("*")
+        if p.suffix.lower() in valid_ext and not p.name.startswith(".")
+    ]
 
     if not ref_image_files:
-        st.error("No images found in the uploaded ZIP. Make sure it contains JPG or PNG files.")
+        st.error("No valid images found in your ZIP. Make sure it contains JPG, PNG, BMP, or TIFF files.")
         st.stop()
     else:
-        st.success(f"✅ Found {len(ref_image_files)} images in your ZIP archive.")
+        st.success(f"✅ Found {len(ref_image_files)} candidate images.")
 else:
     st.info("Please upload a ZIP file to continue.")
 
@@ -140,28 +160,36 @@ if ref_zip and query_file:
     ref_features = []
     ref_paths = []
 
-    st.write("Extracting features from reference images...")
+    total_images = len(ref_image_files)
     progress = st.progress(0)
-    for i, filepath in enumerate(ref_image_files):
+    status = st.empty()
+    st.write("Extracting visual features from reference images...")
+
+    for i, filepath in enumerate(ref_image_files, start=1):
+        image = safe_open_image(filepath)
+        if image is None:
+            continue
         try:
-            image = Image.open(filepath).convert("RGB")
             feat = extract_features(image)
             ref_features.append(feat)
             ref_paths.append(str(filepath))
         except Exception as e:
-            st.warning(f"Skipping {filepath.name}: {e}")
-        progress.progress((i + 1) / len(ref_image_files))
+            st.warning(f"⚠️ Could not process {filepath.name}: {e}")
+        progress.progress(i / total_images)
+        status.text(f"Processed {i}/{total_images} images")
+
     progress.empty()
+    status.empty()
 
     if len(ref_features) == 0:
-        st.error("No valid reference images found.")
+        st.error("No valid reference images were successfully processed.")
         st.stop()
 
     ref_features = np.array(ref_features)
     index = faiss.IndexFlatL2(ref_features.shape[1])
     index.add(ref_features)
 
-    query_img = Image.open(query_file).convert("RGB")
+    query_img = safe_open_image(query_file)
     query_feat = extract_features(query_img)
     D, I = index.search(np.array([query_feat]), k=5)
 
@@ -169,7 +197,9 @@ if ref_zip and query_file:
     st.image(query_img, caption="Query Image", use_container_width=True)
 
     for rank, (idx, dist) in enumerate(zip(I[0], D[0]), start=1):
-        sim_img = Image.open(ref_paths[idx]).convert("RGB")
+        sim_img = safe_open_image(ref_paths[idx])
+        if sim_img is None:
+            continue
         metrics = analyze_similarity_metrics(query_img, sim_img)
         explanation = describe_metrics(metrics)
         fig = plot_metrics(metrics)
