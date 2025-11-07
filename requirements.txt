@@ -1,0 +1,9 @@
+streamlit
+pillow
+torch
+torchvision
+faiss-cpu
+scikit-image
+scipy
+numpy
+matplotlib
