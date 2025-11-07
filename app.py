@@ -16,8 +16,8 @@ import cv2
 import matplotlib.pyplot as plt
 
 # --- Page setup ---
-st.set_page_config(page_title="Image Similarity Analyzer", layout="wide")
-st.title("🔍 Image Similarity Analyzer — Technical Metrics Edition")
+st.set_page_config(page_title="Image Similarity App", layout="wide")
+st.title("🔍 Image Similarity App")
 st.write(
     "Upload a **ZIP folder** of reference images and a **query image**. "
     "The app finds the 5 most visually similar images using deep features "
