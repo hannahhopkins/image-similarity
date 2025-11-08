@@ -146,12 +146,16 @@ uploaded_query = st.file_uploader("Upload a query image", type=["jpg", "jpeg", "
 
 if uploaded_zip and uploaded_query:
     with st.spinner("Processing images..."):
+            st.write("✅ ZIP uploaded:", uploaded_zip.name)
+            st.write("✅ Query image uploaded:", uploaded_query.name)
         ref_images = extract_zip_to_temp(uploaded_zip)
         query_img = Image.open(uploaded_query).convert("RGB")
+        st.write(f"📸 Found {len(ref_images)} reference images.")
+
 
         results = []
         for ref_path in ref_images:
-            ref_img = Image.open(ref_path).convert("RGB")
+            ref_img = Image.open(ref_path).convert("RGB").resize(query_img.size)
 
             metrics = {
                 "Color Histogram Match": compute_histogram_similarity(query_img, ref_img),
@@ -166,7 +170,12 @@ if uploaded_zip and uploaded_query:
 
         results = sorted(results, key=lambda x: x[2], reverse=True)[:5]
 
-        st.subheader("Top 5 Similar Images")
+if not results:
+st.error("No valid image comparisons found. Check that your ZIP contains only JPG or PNG images.")
+else:
+    st.subheader("Top 5 Similar Images")
+    
+st.subheader("Top 5 Similar Images")
         for i, (path, metrics, score) in enumerate(results, start=1):
             st.markdown(f"### {i}. {os.path.basename(path)} (Overall Similarity: `{score:.2f}`)")
             col1, col2 = st.columns(2)
