@@ -22,11 +22,24 @@ def extract_zip_to_temp(uploaded_zip):
     temp_dir = tempfile.mkdtemp()
     with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
         zip_ref.extractall(temp_dir)
-    image_files = [
-        os.path.join(temp_dir, f) for f in os.listdir(temp_dir)
-        if f.lower().endswith(('.jpg', '.jpeg', '.png'))
-    ]
+
+    # Walk recursively to find all image files
+    image_files = []
+    for root, dirs, files in os.walk(temp_dir):
+        for file in files:
+            if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                image_files.append(os.path.join(root, file))
+
+    # Filter out hidden or corrupted files
+    image_files = [f for f in image_files if not os.path.basename(f).startswith('.')]
+
+    if not image_files:
+        st.warning("⚠️ No valid JPG or PNG images found in the ZIP.")
+    else:
+        st.success(f"✅ Found {len(image_files)} valid images in extracted ZIP.")
+
     return image_files
+
 
 def compute_histogram_similarity(img1, img2):
     h1 = np.histogram(np.array(img1).ravel(), bins=256, range=(0, 255))[0]
