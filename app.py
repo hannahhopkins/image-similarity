@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# app.py — Image Similarity Analyzer with color sub-metrics + palettes (10 colors)
+# app.py — Image Similarity Analyzer 
 
 import os
 import zipfile
@@ -28,8 +28,8 @@ import matplotlib
 # Use Agg backend for environments without display
 matplotlib.use("Agg")
 
-st.set_page_config(page_title="Image Similarity — Color + Metrics", layout="wide")
-st.title("🔍 Image Similarity — Color Sub-metrics + Compact Palettes")
+st.set_page_config(page_title="Image Similarity Analyzer ", layout="wide")
+st.title("🔍 Image Similarity Analyzer ")
 st.write(
     "Upload a ZIP of reference images and a query image. "
     "Choose top-N matches. Each match displays technical metrics and a compact 10-color palette "
