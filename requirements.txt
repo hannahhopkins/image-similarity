@@ -1,11 +1,7 @@
 streamlit
-torch
-torchvision
-faiss-cpu
 pillow
 numpy
-opencv-python-headless
-scikit-image
-scipy
-scikit-learn
 matplotlib
+scikit-image
+scikit-learn
+colormath
