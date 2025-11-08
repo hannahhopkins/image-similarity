@@ -31,7 +31,7 @@ def extract_zip_to_temp(uploaded_zip):
 def compute_histogram_similarity(img1, img2):
     h1 = np.histogram(np.array(img1).ravel(), bins=256, range=(0, 255))[0]
     h2 = np.histogram(np.array(img2).ravel(), bins=256, range=(0, 255))[0]
-    return 1 - pairwise_distances([h1], [h2], metric='cosine')[0][0]
+    return float(1 - pairwise_distances([h1], [h2], metric='cosine')[0][0])
 
 def compute_texture_similarity(img1, img2):
     gray1, gray2 = rgb2gray(img1), rgb2gray(img2)
@@ -39,15 +39,17 @@ def compute_texture_similarity(img1, img2):
     glcm2 = graycomatrix((gray2 * 255).astype('uint8'), [1], [0], symmetric=True, normed=True)
     t1 = graycoprops(glcm1, 'contrast')[0, 0]
     t2 = graycoprops(glcm2, 'contrast')[0, 0]
-    return 1 - abs(t1 - t2) / max(t1, t2, 1e-5)
+    return float(1 - abs(t1 - t2) / max(t1, t2, 1e-5))
 
 def compute_structure_similarity(img1, img2):
     gray1, gray2 = rgb2gray(img1), rgb2gray(img2)
+    gray1 = np.clip(gray1, 0, 1)
+    gray2 = np.clip(gray2, 0, 1)
     score, _ = ssim(gray1, gray2, full=True)
-    return max(score, 0)
+    return float(max(score, 0))
 
 def compute_brightness_similarity(img1, img2):
-    return 1 - abs(np.mean(np.array(img1)) - np.mean(np.array(img2))) / 255
+    return float(1 - abs(np.mean(np.array(img1)) - np.mean(np.array(img2))) / 255)
 
 def compute_color_harmony_similarity(img1, img2):
     avg1 = np.mean(np.array(img1).reshape(-1, 3), axis=0)
@@ -55,7 +57,7 @@ def compute_color_harmony_similarity(img1, img2):
     c1 = convert_color(sRGBColor(*avg1/255), LabColor)
     c2 = convert_color(sRGBColor(*avg2/255), LabColor)
     delta_e = np.linalg.norm([c1.lab_l - c2.lab_l, c1.lab_a - c2.lab_a, c1.lab_b - c2.lab_b])
-    return max(0, 1 - delta_e / 100)
+    return float(max(0, 1 - delta_e / 100))
 
 def generate_color_palette(img, n_colors=10):
     arr = np.array(img).reshape(-1, 3)
@@ -146,48 +148,53 @@ uploaded_query = st.file_uploader("Upload a query image", type=["jpg", "jpeg", "
 
 if uploaded_zip and uploaded_query:
     with st.spinner("Processing images..."):
-            st.write("✅ ZIP uploaded:", uploaded_zip.name)
-            st.write("✅ Query image uploaded:", uploaded_query.name)
+        st.write("✅ ZIP uploaded:", uploaded_zip.name)
+        st.write("✅ Query image uploaded:", uploaded_query.name)
+
         ref_images = extract_zip_to_temp(uploaded_zip)
-        query_img = Image.open(uploaded_query).convert("RGB")
         st.write(f"📸 Found {len(ref_images)} reference images.")
 
+        query_img = Image.open(uploaded_query).convert("RGB")
 
         results = []
         for ref_path in ref_images:
-            ref_img = Image.open(ref_path).convert("RGB").resize(query_img.size)
+            try:
+                ref_img = Image.open(ref_path).convert("RGB").resize(query_img.size)
+                st.write(f"🔍 Comparing with: {os.path.basename(ref_path)}")
 
-            metrics = {
-                "Color Histogram Match": compute_histogram_similarity(query_img, ref_img),
-                "Texture Entropy Similarity": compute_texture_similarity(query_img, ref_img),
-                "Structural Pattern Consistency": compute_structure_similarity(query_img, ref_img),
-                "Mean Brightness Proximity": compute_brightness_similarity(query_img, ref_img),
-                "Color Harmony Distance": compute_color_harmony_similarity(query_img, ref_img)
-            }
+                metrics = {
+                    "Color Histogram Match": compute_histogram_similarity(query_img, ref_img),
+                    "Texture Entropy Similarity": compute_texture_similarity(query_img, ref_img),
+                    "Structural Pattern Consistency": compute_structure_similarity(query_img, ref_img),
+                    "Mean Brightness Proximity": compute_brightness_similarity(query_img, ref_img),
+                    "Color Harmony Distance": compute_color_harmony_similarity(query_img, ref_img)
+                }
 
-            avg_score = np.mean(list(metrics.values()))
-            results.append((ref_path, metrics, avg_score))
+                avg_score = np.mean(list(metrics.values()))
+                results.append((ref_path, metrics, avg_score))
+            except Exception as e:
+                st.warning(f"⚠️ Skipping {ref_path}: {e}")
 
-        results = sorted(results, key=lambda x: x[2], reverse=True)[:5]
+        st.write(f"✅ Processed {len(results)} comparisons.")
 
-if not results:
-st.error("No valid image comparisons found. Check that your ZIP contains only JPG or PNG images.")
-else:
-    st.subheader("Top 5 Similar Images")
-    
-st.subheader("Top 5 Similar Images")
-        for i, (path, metrics, score) in enumerate(results, start=1):
-            st.markdown(f"### {i}. {os.path.basename(path)} (Overall Similarity: `{score:.2f}`)")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.image(query_img, caption="Query Image", use_container_width=True)
-            with col2:
-                st.image(path, caption="Reference Image", use_container_width=True)
+        if not results:
+            st.error("No valid image comparisons found. Make sure your ZIP contains only JPG or PNG images.")
+        else:
+            results = sorted(results, key=lambda x: x[2], reverse=True)[:5]
+            st.subheader("Top 5 Similar Images")
 
-            bar1, labels1 = generate_color_palette(query_img)
-            bar2, labels2 = generate_color_palette(Image.open(path))
-            combined_palette = np.vstack([bar1, bar2])
-            st.image(combined_palette, caption=f"Palette Comparison: {', '.join(labels1[:5])}", use_container_width=True)
+            for i, (path, metrics, score) in enumerate(results, start=1):
+                st.markdown(f"### {i}. {os.path.basename(path)} (Overall Similarity: `{score:.2f}`)")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.image(query_img, caption="Query Image", use_container_width=True)
+                with col2:
+                    st.image(path, caption="Reference Image", use_container_width=True)
 
-            display_similarity_analysis(metrics, palette_img=combined_palette)
-            st.divider()
+                bar1, labels1 = generate_color_palette(query_img)
+                bar2, labels2 = generate_color_palette(Image.open(path))
+                combined_palette = np.vstack([bar1, bar2])
+                st.image(combined_palette, caption=f"Palette Comparison: {', '.join(labels1[:5])}", use_container_width=True)
+
+                display_similarity_analysis(metrics, palette_img=combined_palette)
+                st.divider()
