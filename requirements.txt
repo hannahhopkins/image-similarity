@@ -7,4 +7,5 @@ numpy
 opencv-python-headless
 scikit-image
 scipy
+scikit-learn
 matplotlib
