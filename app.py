@@ -1,163 +1,110 @@
 import os
-import zipfile
 import tempfile
+import zipfile
 import numpy as np
 import streamlit as st
 from PIL import Image
-import matplotlib.pyplot as plt
-from skimage.feature import graycomatrix, graycoprops
-from skimage.color import rgb2gray
 from skimage.metrics import structural_similarity as ssim
-from sklearn.metrics import pairwise_distances
-from colormath.color_objects import LabColor, sRGBColor
-from colormath.color_conversions import convert_color
+from skimage.feature import graycomatrix, graycoprops
+import cv2
+from colorthief import ColorThief
+import matplotlib.pyplot as plt
+import io
 
-# --- Page setup ---
-st.set_page_config(page_title="Image Similarity Analyzer", layout="wide")
-st.title("🎨 Image Similarity Analyzer")
-st.markdown("Upload a reference folder (as ZIP) and a single query image to compare visual characteristics.")
-
-# --- Utility functions ---
+# -----------------------------
+# Helper: Extract ZIP safely
+# -----------------------------
 def extract_zip_to_temp(uploaded_zip):
     temp_dir = tempfile.mkdtemp()
     with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
         zip_ref.extractall(temp_dir)
 
-    # Walk recursively to find all image files
     image_files = []
-    for root, dirs, files in os.walk(temp_dir):
+    for root, _, files in os.walk(temp_dir):
         for file in files:
             if file.lower().endswith(('.jpg', '.jpeg', '.png')):
                 image_files.append(os.path.join(root, file))
 
-    # Filter out hidden or corrupted files
     image_files = [f for f in image_files if not os.path.basename(f).startswith('.')]
-
     if not image_files:
         st.warning("⚠️ No valid JPG or PNG images found in the ZIP.")
     else:
         st.success(f"✅ Found {len(image_files)} valid images in extracted ZIP.")
-
     return image_files
 
+# -----------------------------
+# Helper: Extract dominant colors
+# -----------------------------
+def extract_palette(image, n_colors=10):
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        image.save(tmp.name)
+        ct = ColorThief(tmp.name)
+        palette = ct.get_palette(color_count=n_colors)
+    os.remove(tmp.name)
+    return palette
 
-def compute_histogram_similarity(img1, img2):
-    h1 = np.histogram(np.array(img1).ravel(), bins=256, range=(0, 255))[0]
-    h2 = np.histogram(np.array(img2).ravel(), bins=256, range=(0, 255))[0]
-    return float(1 - pairwise_distances([h1], [h2], metric='cosine')[0][0])
+# -----------------------------
+# Helper: Display color palette
+# -----------------------------
+def plot_palette(palette, labels=True):
+    fig, ax = plt.subplots(figsize=(3, 0.3))
+    for i, color in enumerate(palette):
+        ax.add_patch(plt.Rectangle((i, 0), 1, 1, color=np.array(color) / 255))
+        if labels:
+            hex_val = '#%02x%02x%02x' % color
+            ax.text(i + 0.5, 0.5, hex_val, ha='center', va='center', fontsize=5, color='white')
+    ax.set_xlim(0, len(palette))
+    ax.axis('off')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
 
-def compute_texture_similarity(img1, img2):
-    gray1, gray2 = rgb2gray(img1), rgb2gray(img2)
-    glcm1 = graycomatrix((gray1 * 255).astype('uint8'), [1], [0], symmetric=True, normed=True)
-    glcm2 = graycomatrix((gray2 * 255).astype('uint8'), [1], [0], symmetric=True, normed=True)
-    t1 = graycoprops(glcm1, 'contrast')[0, 0]
-    t2 = graycoprops(glcm2, 'contrast')[0, 0]
-    return float(1 - abs(t1 - t2) / max(t1, t2, 1e-5))
+# -----------------------------
+# Helper: Calculate similarity metrics
+# -----------------------------
+def calculate_metrics(query_img, ref_img):
+    # Resize to match query
+    ref_img = ref_img.resize(query_img.size)
+    query_gray = np.array(query_img.convert("L"))
+    ref_gray = np.array(ref_img.convert("L"))
 
-def compute_structure_similarity(img1, img2):
-    gray1, gray2 = rgb2gray(img1), rgb2gray(img2)
-    gray1 = np.clip(gray1, 0, 1)
-    gray2 = np.clip(gray2, 0, 1)
-    score, _ = ssim(gray1, gray2, full=True)
-    return float(max(score, 0))
+    # Structural Similarity (SSIM)
+    ssim_score = ssim(
+        query_gray,
+        ref_gray,
+        data_range=ref_gray.max() - ref_gray.min()
+    )
 
-def compute_brightness_similarity(img1, img2):
-    return float(1 - abs(np.mean(np.array(img1)) - np.mean(np.array(img2))) / 255)
+    # Texture (GLCM contrast)
+    glcm1 = graycomatrix((query_gray / 16).astype('uint8'), [1], [0], 256, symmetric=True, normed=True)
+    glcm2 = graycomatrix((ref_gray / 16).astype('uint8'), [1], [0], 256, symmetric=True, normed=True)
+    tex_sim = 1 - abs(graycoprops(glcm1, 'contrast')[0, 0] - graycoprops(glcm2, 'contrast')[0, 0])
 
-def compute_color_harmony_similarity(img1, img2):
-    avg1 = np.mean(np.array(img1).reshape(-1, 3), axis=0)
-    avg2 = np.mean(np.array(img2).reshape(-1, 3), axis=0)
-    c1 = convert_color(sRGBColor(*avg1/255), LabColor)
-    c2 = convert_color(sRGBColor(*avg2/255), LabColor)
-    delta_e = np.linalg.norm([c1.lab_l - c2.lab_l, c1.lab_a - c2.lab_a, c1.lab_b - c2.lab_b])
-    return float(max(0, 1 - delta_e / 100))
+    # Edge similarity
+    edges1 = cv2.Canny(np.array(query_gray), 100, 200)
+    edges2 = cv2.Canny(np.array(ref_gray), 100, 200)
+    edge_overlap = np.sum(edges1 & edges2) / (np.sum(edges1 | edges2) + 1e-6)
 
-def generate_color_palette(img, n_colors=10):
-    arr = np.array(img).reshape(-1, 3)
-    idx = np.random.choice(len(arr), size=min(10000, len(arr)), replace=False)
-    sample = arr[idx]
-    colors, counts = np.unique(sample, axis=0, return_counts=True)
-    sorted_idx = np.argsort(counts)[::-1][:n_colors]
-    top_colors = colors[sorted_idx]
-    bar = np.zeros((50, n_colors * 50, 3), dtype=np.uint8)
-    for i, c in enumerate(top_colors):
-        bar[:, i * 50:(i + 1) * 50] = c
-    return bar, [f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}" for c in top_colors]
+    # Brightness difference
+    bright_sim = 1 - abs(np.mean(query_gray) - np.mean(ref_gray)) / 255
 
-def display_similarity_analysis(metric_scores, palette_img=None):
-    metric_explanations = {
-        "Color Histogram Match": {
-            "desc": "Compares hue and intensity distribution between images.",
-            "interpret": lambda v: (
-                "High overlap in tonal structure." if v > 0.8 else
-                "Moderate overlap in overall hue distribution." if v > 0.5 else
-                "Distinct hue or brightness distribution."
-            )
-        },
-        "Texture Entropy Similarity": {
-            "desc": "Compares pixel variance and micro-patterning.",
-            "interpret": lambda v: (
-                "Strong similarity in surface detail." if v > 0.8 else
-                "Some shared texture complexity." if v > 0.5 else
-                "Distinct surface structure or pattern density."
-            )
-        },
-        "Structural Pattern Consistency": {
-            "desc": "Compares repeating forms and edge layout.",
-            "interpret": lambda v: (
-                "Strong geometric alignment." if v > 0.8 else
-                "Moderate correspondence in visual rhythm." if v > 0.5 else
-                "Divergent structural organization."
-            )
-        },
-        "Mean Brightness Proximity": {
-            "desc": "Measures tonal lightness similarity.",
-            "interpret": lambda v: (
-                "Nearly identical luminance range." if v > 0.8 else
-                "Comparable exposure and tone balance." if v > 0.5 else
-                "Different overall brightness."
-            )
-        },
-        "Color Harmony Distance": {
-            "desc": "Compares warm–cool tonal balance.",
-            "interpret": lambda v: (
-                "Very close chromatic temperature." if v > 0.8 else
-                "Similar color warmth balance." if v > 0.5 else
-                "Different overall tone temperature."
-            )
-        }
+    return {
+        "SSIM": float(ssim_score),
+        "Texture": float(tex_sim),
+        "Edges": float(edge_overlap),
+        "Brightness": float(bright_sim)
     }
 
-    names = list(metric_scores.keys())
-    values = [metric_scores[n] for n in names]
-    col1, col2 = st.columns([1, 2])
+# -----------------------------
+# Streamlit App
+# -----------------------------
+st.title("🧠 Visual Similarity Analyzer")
+st.write("Upload a ZIP of reference images and a single query image to compare visual similarity.")
 
-    with col1:
-        fig, ax = plt.subplots(figsize=(3, len(names) * 0.35))
-        bars = ax.barh(names, values)
-        ax.set_xlim(0, 1)
-        ax.invert_yaxis()
-        for bar, val in zip(bars, values):
-            ax.text(val + 0.02, bar.get_y() + bar.get_height()/2, f"{val:.2f}", va='center', fontsize=8)
-        plt.tight_layout()
-        st.pyplot(fig, use_container_width=True)
-        if palette_img is not None:
-            st.image(palette_img, caption="Color Palette Comparison", use_container_width=True)
-
-    with col2:
-        st.markdown("### Technical Image Similarity Report")
-        for name, value in metric_scores.items():
-            info = metric_explanations.get(name, {})
-            desc = info.get("desc", "No description available.")
-            interpret = info.get("interpret", lambda v: "No interpretation available.")(value)
-            st.markdown(f"**{name}** — {desc}")
-            st.caption(f"**Analysis:** {interpret}")
-            st.markdown(f"**Score:** `{value:.2f}`")
-            st.divider()
-
-# --- Streamlit UI ---
-uploaded_zip = st.file_uploader("Upload ZIP of reference images", type="zip")
-uploaded_query = st.file_uploader("Upload a query image", type=["jpg", "jpeg", "png"])
+uploaded_zip = st.file_uploader("Upload ZIP of reference images", type=["zip"])
+uploaded_query = st.file_uploader("Upload a single query image", type=["jpg", "jpeg", "png"])
 
 if uploaded_zip and uploaded_query:
     with st.spinner("Processing images..."):
@@ -168,46 +115,55 @@ if uploaded_zip and uploaded_query:
         st.write(f"📸 Found {len(ref_images)} reference images.")
 
         query_img = Image.open(uploaded_query).convert("RGB")
-
         results = []
+
         for ref_path in ref_images:
             try:
-                ref_img = Image.open(ref_path).convert("RGB").resize(query_img.size)
-                st.write(f"🔍 Comparing with: {os.path.basename(ref_path)}")
-
-                metrics = {
-                    "Color Histogram Match": compute_histogram_similarity(query_img, ref_img),
-                    "Texture Entropy Similarity": compute_texture_similarity(query_img, ref_img),
-                    "Structural Pattern Consistency": compute_structure_similarity(query_img, ref_img),
-                    "Mean Brightness Proximity": compute_brightness_similarity(query_img, ref_img),
-                    "Color Harmony Distance": compute_color_harmony_similarity(query_img, ref_img)
-                }
-
+                ref_img = Image.open(ref_path).convert("RGB")
+                metrics = calculate_metrics(query_img, ref_img)
                 avg_score = np.mean(list(metrics.values()))
-                results.append((ref_path, metrics, avg_score))
+                results.append((ref_path, avg_score, metrics))
             except Exception as e:
-                st.warning(f"⚠️ Skipping {ref_path}: {e}")
+                st.write(f"⚠️ Skipping {ref_path}: {e}")
 
         st.write(f"✅ Processed {len(results)} comparisons.")
 
-        if not results:
-            st.error("No valid image comparisons found. Make sure your ZIP contains only JPG or PNG images.")
-        else:
-            results = sorted(results, key=lambda x: x[2], reverse=True)[:5]
-            st.subheader("Top 5 Similar Images")
+    if not results:
+        st.error("No valid image comparisons found. Make sure your ZIP contains only JPG or PNG images.")
+    else:
+        st.subheader("Top 5 Similar Images")
+        results.sort(key=lambda x: x[1], reverse=True)
+        top_results = results[:5]
 
-            for i, (path, metrics, score) in enumerate(results, start=1):
-                st.markdown(f"### {i}. {os.path.basename(path)} (Overall Similarity: `{score:.2f}`)")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.image(query_img, caption="Query Image", use_container_width=True)
-                with col2:
-                    st.image(path, caption="Reference Image", use_container_width=True)
+        for ref_path, avg_score, metrics in top_results:
+            ref_img = Image.open(ref_path).convert("RGB").resize(query_img.size)
 
-                bar1, labels1 = generate_color_palette(query_img)
-                bar2, labels2 = generate_color_palette(Image.open(path))
-                combined_palette = np.vstack([bar1, bar2])
-                st.image(combined_palette, caption=f"Palette Comparison: {', '.join(labels1[:5])}", use_container_width=True)
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                st.image(query_img, caption="Query Image", use_container_width=True)
+            with col2:
+                st.image(ref_img, caption=f"Match: {os.path.basename(ref_path)}", use_container_width=True)
 
-                display_similarity_analysis(metrics, palette_img=combined_palette)
-                st.divider()
+            # Palette comparison
+            q_palette = extract_palette(query_img)
+            r_palette = extract_palette(ref_img)
+            q_buf = plot_palette(q_palette)
+            r_buf = plot_palette(r_palette)
+            st.image([q_buf, r_buf], caption=["Query Palette", "Reference Palette"], width=250)
+
+            # Metrics chart (streamlined)
+            fig, ax = plt.subplots(figsize=(3, 1.2))
+            ax.barh(list(metrics.keys()), list(metrics.values()))
+            ax.set_xlim(0, 1)
+            ax.set_xlabel("Similarity Score", fontsize=8)
+            ax.set_title("Metric Breakdown", fontsize=9)
+            ax.tick_params(axis='both', labelsize=8)
+            st.pyplot(fig, use_container_width=False)
+
+            # Text interpretation
+            st.markdown(
+                f"**Technical Summary:** This match shows {metrics['SSIM']:.2f} structural alignment, "
+                f"{metrics['Texture']:.2f} textural coherence, {metrics['Edges']:.2f} edge overlap, "
+                f"and {metrics['Brightness']:.2f} brightness balance. Overall score: {avg_score:.2f}."
+            )
+            st.markdown("---")
