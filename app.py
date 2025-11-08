@@ -100,7 +100,7 @@ def calculate_metrics(query_img, ref_img):
 # -----------------------------
 # Streamlit App
 # -----------------------------
-st.title("🧠 Visual Similarity Analyzer")
+st.title("Image Similarity Analyzer")
 st.write("Upload a ZIP of reference images and a single query image to compare visual similarity.")
 
 uploaded_zip = st.file_uploader("Upload ZIP of reference images", type=["zip"])
@@ -167,3 +167,5 @@ if uploaded_zip and uploaded_query:
                 f"and {metrics['Brightness']:.2f} brightness balance. Overall score: {avg_score:.2f}."
             )
             st.markdown("---")
+
+
