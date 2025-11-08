@@ -1,7 +1,7 @@
 streamlit
-pillow
 numpy
-matplotlib
+Pillow
 scikit-image
-scikit-learn
-colormath
+opencv-python-headless
+colorthief
+matplotlib
