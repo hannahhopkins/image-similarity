@@ -242,7 +242,9 @@ def histogram_correlation(img1, img2, bins=8):
     h1 = cv2.normalize(h1, h1).flatten()
     h2 = cv2.normalize(h2, h2).flatten()
     val = cv2.compareHist(h1.astype('float32'), h2.astype('float32'), cv2.HISTCMP_CORREL)
-    return float(max(0.0, min(1.0, val)))
+    # remap [-1,1] → [0,1]
+    val = (val + 1.0) / 2.0
+    return float(np.clip(val, 0.0, 1.0))
 
 def hue_similarity(img1, img2, bins=36):
     h1 = rgb2hsv(np.array(img1.resize((224,224)))/255.0)[:,:,0].flatten()
