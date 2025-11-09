@@ -1,7 +1,12 @@
 streamlit
+torch
+torchvision
+faiss-cpu
+pillow
 numpy
-Pillow
-scikit-image
 opencv-python-headless
-colorthief
+scikit-image
+scipy
+scikit-learn
+plotly
 matplotlib
