@@ -70,7 +70,7 @@ def make_metric_chart(metrics):
     return fig
 
 # --- Streamlit App ---
-st.title("🧠 Image Similarity Analyzer with Color Palettes")
+st.title("Image Similarity Analyzer")
 
 uploaded_zip = st.file_uploader("Upload a ZIP folder of reference images (JPG/PNG)", type=["zip"])
 query_image = st.file_uploader("Upload your query image", type=["jpg", "jpeg", "png"])
@@ -93,7 +93,7 @@ if uploaded_zip and query_image:
         results.sort(key=lambda x: np.mean(list(x[1].values())), reverse=True)
         top_results = results[:5]
 
-        st.subheader("🔝 Top 5 Most Similar Images")
+        st.subheader("Top 5 Most Similar Images")
 
         for i, (ref_path, metrics) in enumerate(top_results):
             ref_img = Image.open(ref_path).convert("RGB")
