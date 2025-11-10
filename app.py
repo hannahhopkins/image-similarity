@@ -103,11 +103,12 @@ if uploaded_zip and query_image:
         with zipfile.ZipFile(uploaded_zip, "r") as zip_ref:
             zip_ref.extractall(tmp_dir)
 
-        ref_paths = [
-            os.path.join(tmp_dir, f)
-            for f in os.listdir(tmp_dir)
-            if f.lower().endswith((".jpg", ".jpeg", ".png"))
-        ]
+        ref_paths = []
+for root, _, files in os.walk(tmp_dir):
+    for f in files:
+        if f.lower().endswith((".jpg", ".jpeg", ".png")):
+            ref_paths.append(os.path.join(root, f))
+
 
         if len(ref_paths) == 0:
             st.error("❌ No valid reference images found. Please ensure your ZIP contains JPG or PNG files.")
