@@ -32,7 +32,6 @@ st.write(
 st.sidebar.header("Options")
 
 top_k = st.sidebar.slider("Matches to display", 1, 12, 5, 1)
-st.sidebar.caption("Number of highest-scoring reference images to display.")
 
 num_colors = st.sidebar.slider("Palette size per image", 3, 12, 6, 1)
 st.sidebar.caption("Number of dominant colors extracted from each image for palette comparison.")
