@@ -317,13 +317,14 @@ if uploaded_zip and query_file:
                 hybrid = weighted_hybrid_palette(q_cols, r_cols, min(5,num_colors), q_weight)
 
                 st.markdown("Blended Midpoint")
-                st.plotly_chart(plotly_palette(mid), use_container_width=True)
+                st.plotly_chart(plotly_palette(mid), use_container_width=True, key=f"mid_{rank}")
 
                 st.markdown("Shared Hue Intersection")
-                st.plotly_chart(plotly_palette(inter), use_container_width=True)
+                st.plotly_chart(plotly_palette(inter), use_container_width=True, key=f"inter_{rank}")
 
                 st.markdown("Weighted Hybrid")
-                st.plotly_chart(plotly_palette(hybrid), use_container_width=True)
+                st.plotly_chart(plotly_palette(hybrid), use_container_width=True, key=f"hybrid_{rank}")
+
 
 else:
     st.info("Upload a ZIP of reference images and a query image to begin.")
