@@ -10,9 +10,9 @@ import os
 import tempfile
 from io import BytesIO
 
-# ---------------------------
+# -------------------------------------------------
 # Streamlit Configuration
-# ---------------------------
+# -------------------------------------------------
 st.set_page_config(
     page_title="Image Similarity Analyzer",
     layout="wide",
@@ -21,13 +21,13 @@ st.set_page_config(
 
 st.title("Image Similarity Analyzer")
 st.write("""
-Upload a ZIP folder of **reference images** and a **query image**.  
+Upload a ZIP folder of reference images and a query image.
 This app analyzes structural, color, and entropy-based similarity and visualizes color intersections.
 """)
 
-# ---------------------------
+# -------------------------------------------------
 # Color Palette Extraction
-# ---------------------------
+# -------------------------------------------------
 def extract_palette(img, n_colors=5):
     img_np = np.array(img)
     img_np = img_np.reshape(-1, 3)
@@ -43,9 +43,9 @@ def create_palette_image(colors, square_size=40):
         palette[:, i * square_size:(i + 1) * square_size] = color
     return Image.fromarray(palette)
 
-# ---------------------------
+# -------------------------------------------------
 # Image Similarity Metrics
-# ---------------------------
+# -------------------------------------------------
 def compute_metrics(img1, img2):
     img1_gray = cv2.cvtColor(np.array(img1), cv2.COLOR_RGB2GRAY)
     img2_gray = cv2.cvtColor(np.array(img2), cv2.COLOR_RGB2GRAY)
@@ -53,10 +53,11 @@ def compute_metrics(img1, img2):
     # Structural Similarity
     ssim_score = ssim(img1_gray, img2_gray, data_range=img2_gray.max() - img2_gray.min())
 
-    # Color Histogram Similarity
+    # Color Histogram Similarity (normalized)
     hist1 = cv2.calcHist([np.array(img1)], [0], None, [256], [0, 256])
     hist2 = cv2.calcHist([np.array(img2)], [0], None, [256], [0, 256])
-    hist_score = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+    hist_score_raw = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+    hist_score = (hist_score_raw + 1.0) / 2.0  # remap from [-1, 1] → [0, 1]
 
     # Entropy Similarity
     hist1_prob = hist1 / np.sum(hist1)
@@ -71,9 +72,9 @@ def compute_metrics(img1, img2):
         "Entropy Similarity": float(entropy_sim)
     }
 
-# ---------------------------
+# -------------------------------------------------
 # Plotly Chart for Metrics
-# ---------------------------
+# -------------------------------------------------
 def make_metric_chart(metrics):
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -92,26 +93,28 @@ def make_metric_chart(metrics):
     )
     return fig
 
-# ---------------------------
+# -------------------------------------------------
 # File Upload Interface
-# ---------------------------
-uploaded_zip = st.file_uploader("📁 Upload a ZIP of Reference Images", type=["zip"])
-query_image = st.file_uploader("🖼️ Upload a Query Image", type=["jpg", "jpeg", "png"])
+# -------------------------------------------------
+uploaded_zip = st.file_uploader("Upload a ZIP of Reference Images", type=["zip"])
+query_image = st.file_uploader("Upload a Query Image", type=["jpg", "jpeg", "png"])
 
 if uploaded_zip and query_image:
+    # Create a temporary directory for the uploaded ZIP
     with tempfile.TemporaryDirectory() as tmp_dir:
+        # Extract ZIP contents
         with zipfile.ZipFile(uploaded_zip, "r") as zip_ref:
             zip_ref.extractall(tmp_dir)
 
+        # Recursively search for all valid image files
         ref_paths = []
-for root, _, files in os.walk(tmp_dir):
-    for f in files:
-        if f.lower().endswith((".jpg", ".jpeg", ".png")):
-            ref_paths.append(os.path.join(root, f))
-
+        for root, _, files in os.walk(tmp_dir):
+            for f in files:
+                if f.lower().endswith((".jpg", ".jpeg", ".png")):
+                    ref_paths.append(os.path.join(root, f))
 
         if len(ref_paths) == 0:
-            st.error("❌ No valid reference images found. Please ensure your ZIP contains JPG or PNG files.")
+            st.error("No valid reference images found. Please ensure your ZIP contains JPG or PNG files.")
             st.stop()
 
         query_img = Image.open(query_image).convert("RGB")
@@ -123,13 +126,13 @@ for root, _, files in os.walk(tmp_dir):
                 metrics = compute_metrics(query_img, ref_img)
                 results.append((ref_path, metrics))
             except Exception as e:
-                st.warning(f"⚠️ Skipped {ref_path}: {e}")
+                st.warning(f"Skipped {ref_path}: {e}")
 
         # Sort results by average similarity
         results.sort(key=lambda x: np.mean(list(x[1].values())), reverse=True)
         top_results = results[:5]
 
-        st.subheader("🔝 Top 5 Most Similar Images")
+        st.subheader("Top 5 Most Similar Images")
 
         for i, (ref_path, metrics) in enumerate(top_results):
             ref_img = Image.open(ref_path).convert("RGB")
@@ -147,26 +150,26 @@ for root, _, files in os.walk(tmp_dir):
                 for m, score in metrics.items():
                     if m == "Structural Alignment":
                         desc = (
-                            f"**{m}** — Measures shape and spatial consistency between images. "
+                            f"**{m}** — Measures geometric and spatial consistency between the two images. "
                             f"Result: {score:.2f}, indicating "
-                            f"{'strong' if score>0.75 else 'moderate' if score>0.5 else 'weak'} geometric correspondence."
+                            f"{'strong' if score>0.75 else 'moderate' if score>0.5 else 'weak'} structural correspondence."
                         )
                     elif m == "Color Histogram":
                         desc = (
-                            f"**{m}** — Evaluates overlap in color distributions. "
-                            f"Result: {score:.2f}, suggesting "
-                            f"{'high' if score>0.75 else 'partial' if score>0.5 else 'limited'} chromatic similarity."
+                            f"**{m}** — Compares distribution of colors across the two images. "
+                            f"Result: {score:.2f}, showing "
+                            f"{'high' if score>0.75 else 'partial' if score>0.5 else 'limited'} chromatic overlap."
                         )
                     elif m == "Entropy Similarity":
                         desc = (
-                            f"**{m}** — Compares tonal variation and image complexity. "
-                            f"Result: {score:.2f}, implying "
-                            f"{'comparable' if score>0.75 else 'slightly varied' if score>0.5 else 'contrasting'} texture dynamics."
+                            f"**{m}** — Evaluates tonal variation and textural complexity. "
+                            f"Result: {score:.2f}, suggesting "
+                            f"{'similar' if score>0.75 else 'slightly varied' if score>0.5 else 'contrasting'} texture patterns."
                         )
                     st.markdown(desc)
 
             with col2:
-                st.markdown("#### 🎨 Intersection Palettes")
+                st.markdown("#### Intersection Palettes")
 
                 q_colors = extract_palette(query_img)
                 r_colors = extract_palette(ref_img)
@@ -176,18 +179,18 @@ for root, _, files in os.walk(tmp_dir):
                 shared = np.array([(q_colors[i] + r_colors[i]) / 2 for i in range(min(len(q_colors), len(r_colors)))])
                 weighted = (0.6 * q_colors + 0.4 * r_colors)
 
-                # Display compact palette grids
+                # Display compact square palettes
                 st.image(create_palette_image(blended), caption="Blended Midpoint")
                 st.image(create_palette_image(shared), caption="Shared Hue Range")
                 st.image(create_palette_image(weighted), caption="Weighted Hybrid")
 
-                st.caption("_These palettes represent intersections between the dominant color clusters of each image._")
+                st.caption("These palettes represent intersections between the dominant color clusters of the two images.")
 
 else:
-    st.info("👆 Upload your ZIP folder of reference images and a query image to begin analysis.")
+    st.info("Upload your ZIP folder of reference images and a query image to begin analysis.")
 
-# ---------------------------
+# -------------------------------------------------
 # Footer
-# ---------------------------
+# -------------------------------------------------
 st.markdown("---")
-st.markdown("Built using Streamlit, OpenCV, scikit-image, and Plotly.")
+st.markdown("Built with Streamlit, OpenCV, scikit-image, and Plotly.")
