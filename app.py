@@ -30,13 +30,45 @@ st.write(
 # Sidebar controls
 # ---------------------------
 st.sidebar.header("Options")
+
 top_k = st.sidebar.slider("Matches to display", 1, 12, 5, 1)
+st.sidebar.caption("Number of highest-scoring reference images to display.")
+
 num_colors = st.sidebar.slider("Palette size per image", 3, 12, 6, 1)
+st.sidebar.caption("Number of dominant colors extracted from each image for palette comparison.")
+
 resize_refs = st.sidebar.checkbox("Resize reference images to match query", value=True)
+st.sidebar.caption("Ensures structural comparisons are made at matching resolutions.")
+
+st.sidebar.markdown("---")
+
 hue_bins = st.sidebar.slider("Hue bins (distribution metric)", 12, 72, 36, 6)
-sat_threshold = st.sidebar.slider("Saturation mask threshold (0–1)", 0.0, 1.0, 0.15, 0.05)
-val_threshold = st.sidebar.slider("Value mask threshold (0–1)", 0.0, 1.0, 0.15, 0.05)
+st.sidebar.caption("""
+Determines how finely the hue wheel is divided.  
+Higher values = more sensitive to subtle hue differences.  
+Lower values = broader grouping of color families.
+""")
+
+sat_threshold = st.sidebar.slider("Saturation mask threshold", 0.0, 1.0, 0.15, 0.05)
+st.sidebar.caption("""
+Pixels with saturation below this value are excluded from hue analysis.  
+Use to avoid noise from grayscale or muted regions.
+""")
+
+val_threshold = st.sidebar.slider("Value mask threshold", 0.0, 1.0, 0.15, 0.05)
+st.sidebar.caption("""
+Pixels below this brightness level are excluded from hue analysis.  
+Helps prevent shadows/dark regions from distorting hue measurements.
+""")
+
+st.sidebar.markdown("---")
+
 hybrid_query_weight = st.sidebar.slider("Hybrid palette: query weight", 0.5, 0.9, 0.7, 0.05)
+st.sidebar.caption("""
+Controls how strongly the query image influences the Weighted Hybrid palette.  
+Higher values = palette shifts toward the query's dominant colors.  
+Lower values = more balanced blend between query and reference palettes.
+""")
 
 
 # ---------------------------
