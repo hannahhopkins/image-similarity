@@ -21,8 +21,18 @@ st.set_page_config(
 st.title("Image Similarity Analyzer")
 st.write("""
 Upload a ZIP folder of reference images and a query image.
-This app analyzes structural, color, and entropy-based similarity and visualizes color intersections.
+This tool compares them using structural, color, and entropy-based similarity,
+and visualizes overlapping color palettes.
 """)
+
+# -------------------------------------------------
+# Sidebar Controls
+# -------------------------------------------------
+st.sidebar.header("User Controls")
+
+top_k = st.sidebar.slider("Number of matches to display", 1, 10, 5)
+num_colors = st.sidebar.slider("Palette size (colors per image)", 3, 10, 5)
+resize_refs = st.sidebar.checkbox("Resize reference images to match query", value=True)
 
 # -------------------------------------------------
 # Color Palette Extraction
@@ -45,9 +55,9 @@ def create_palette_image(colors, square_size=40):
 # -------------------------------------------------
 # Image Similarity Metrics
 # -------------------------------------------------
-def compute_metrics(img1, img2):
-    # Resize reference image to match query
-    img2 = img2.resize(img1.size)
+def compute_metrics(img1, img2, resize=True):
+    if resize:
+        img2 = img2.resize(img1.size)
 
     img1_gray = cv2.cvtColor(np.array(img1), cv2.COLOR_RGB2GRAY)
     img2_gray = cv2.cvtColor(np.array(img2), cv2.COLOR_RGB2GRAY)
@@ -86,8 +96,8 @@ def make_metric_chart(metrics):
         marker_color=['#2ca02c', '#1f77b4', '#ff7f0e']
     ))
     fig.update_layout(
-        height=220,
-        margin=dict(l=20, r=20, t=30, b=10),
+        height=200,
+        margin=dict(l=40, r=20, t=30, b=10),
         xaxis=dict(range=[0, 1], title="Similarity Score"),
         yaxis=dict(title=""),
         template="simple_white",
@@ -109,12 +119,11 @@ if uploaded_zip and query_image:
         ref_paths = []
         for root, _, files in os.walk(tmp_dir):
             for f in files:
-            # skip hidden macOS metadata and non-image files
-            if f.startswith("._") or "__MACOSX" in root:
-                continue
-            if f.lower().endswith((".jpg", ".jpeg", ".png")):
-                ref_paths.append(os.path.join(root, f))
-
+                # skip hidden macOS metadata and non-image files
+                if f.startswith("._") or "__MACOSX" in root:
+                    continue
+                if f.lower().endswith((".jpg", ".jpeg", ".png")):
+                    ref_paths.append(os.path.join(root, f))
 
         if len(ref_paths) == 0:
             st.error("No valid reference images found. Please ensure your ZIP contains JPG or PNG files.")
@@ -126,7 +135,7 @@ if uploaded_zip and query_image:
         for ref_path in ref_paths:
             try:
                 ref_img = Image.open(ref_path).convert("RGB")
-                metrics = compute_metrics(query_img, ref_img)
+                metrics = compute_metrics(query_img, ref_img, resize_refs)
                 results.append((ref_path, metrics))
             except Exception as e:
                 st.warning(f"Skipped {ref_path}: {e}")
@@ -137,12 +146,15 @@ if uploaded_zip and query_image:
 
         # Sort results by average similarity
         results.sort(key=lambda x: np.mean(list(x[1].values())), reverse=True)
-        top_results = results[:5]
+        top_results = results[:top_k]
 
-        st.subheader("Top 5 Most Similar Images")
+        st.subheader(f"Top {top_k} Most Similar Images")
 
         for i, (ref_path, metrics) in enumerate(top_results):
-            ref_img = Image.open(ref_path).convert("RGB").resize(query_img.size)
+            ref_img = Image.open(ref_path).convert("RGB")
+            if resize_refs:
+                ref_img = ref_img.resize(query_img.size)
+
             col1, col2 = st.columns([2.5, 1], gap="large")
 
             with col1:
@@ -178,8 +190,8 @@ if uploaded_zip and query_image:
             with col2:
                 st.markdown("#### Intersection Palettes")
 
-                q_colors = extract_palette(query_img)
-                r_colors = extract_palette(ref_img)
+                q_colors = extract_palette(query_img, num_colors)
+                r_colors = extract_palette(ref_img, num_colors)
 
                 blended = np.mean([q_colors, r_colors], axis=0)
                 shared = np.array([(q_colors[i] + r_colors[i]) / 2 for i in range(min(len(q_colors), len(r_colors)))])
