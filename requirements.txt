@@ -1,12 +1,7 @@
 streamlit
-torch
-torchvision
-faiss-cpu
-pillow
 numpy
 opencv-python-headless
 scikit-image
-scipy
 scikit-learn
+pillow
 plotly
-matplotlib
