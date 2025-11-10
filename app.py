@@ -107,7 +107,7 @@ if uploaded_zip and query_image:
             zip_ref.extractall(tmp_dir)
 
         ref_paths = []
-            for root, _, files in os.walk(tmp_dir):
+        for root, _, files in os.walk(tmp_dir):
             for f in files:
         # skip hidden macOS metadata and non-image files
         if f.startswith("._") or "__MACOSX" in root:
