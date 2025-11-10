@@ -74,7 +74,11 @@ def compute_metrics(img1, img2, resize=True):
     # 2. Color Histogram Similarity
     hist1 = cv2.calcHist([img1_np], [0, 1, 2], None, [8, 8, 8], [0, 256]*3)
     hist2 = cv2.calcHist([img2_np], [0, 1, 2], None, [8, 8, 8], [0, 256]*3)
-    hist_score = normalize_metric(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL))
+    cv2.normalize(hist1, hist1)
+    cv2.normalize(hist2, hist2)
+    raw_hist_score = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+    hist_score = (raw_hist_score + 1) / 2  # Normalize from [-1,1] → [0,1]
+
 
     # 3. Entropy Similarity
     h1 = cv2.calcHist([img1_gray], [0], None, [256], [0, 256])
