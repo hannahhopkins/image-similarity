@@ -106,7 +106,8 @@ def compute_metrics(img1, img2, resize=True):
     hsv2 = cv2.cvtColor(img2_np, cv2.COLOR_RGB2HSV)
     hue_hist1 = cv2.calcHist([hsv1], [0], None, [180], [0, 180])
     hue_hist2 = cv2.calcHist([hsv2], [0], None, [180], [0, 180])
-    hue_score = normalize_metric(cv2.compareHist(hue_hist1, hue_hist2, cv2.HISTCMP_CORREL))
+    raw_hue_score = cv2.EMD(hist_h1.astype(np.float32), hist_h2.astype(np.float32), cv2.DIST_L2)[0]
+    hue_score = 1 - raw_hue_score  # smaller EMD = more similar hues
 
     return {
         "Structural Alignment": ssim_score,
