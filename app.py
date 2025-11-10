@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 import zipfile
 import os
 import tempfile
-from io import BytesIO
 
 # -------------------------------------------------
 # Streamlit Configuration
@@ -47,17 +46,20 @@ def create_palette_image(colors, square_size=40):
 # Image Similarity Metrics
 # -------------------------------------------------
 def compute_metrics(img1, img2):
+    # Resize reference image to match query
+    img2 = img2.resize(img1.size)
+
     img1_gray = cv2.cvtColor(np.array(img1), cv2.COLOR_RGB2GRAY)
     img2_gray = cv2.cvtColor(np.array(img2), cv2.COLOR_RGB2GRAY)
 
     # Structural Similarity
     ssim_score = ssim(img1_gray, img2_gray, data_range=img2_gray.max() - img2_gray.min())
 
-    # Color Histogram Similarity (normalized)
+    # Color Histogram Similarity
     hist1 = cv2.calcHist([np.array(img1)], [0], None, [256], [0, 256])
     hist2 = cv2.calcHist([np.array(img2)], [0], None, [256], [0, 256])
     hist_score_raw = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
-    hist_score = (hist_score_raw + 1.0) / 2.0  # remap from [-1, 1] → [0, 1]
+    hist_score = (hist_score_raw + 1.0) / 2.0  # normalize to [0,1]
 
     # Entropy Similarity
     hist1_prob = hist1 / np.sum(hist1)
@@ -100,13 +102,10 @@ uploaded_zip = st.file_uploader("Upload a ZIP of Reference Images", type=["zip"]
 query_image = st.file_uploader("Upload a Query Image", type=["jpg", "jpeg", "png"])
 
 if uploaded_zip and query_image:
-    # Create a temporary directory for the uploaded ZIP
     with tempfile.TemporaryDirectory() as tmp_dir:
-        # Extract ZIP contents
         with zipfile.ZipFile(uploaded_zip, "r") as zip_ref:
             zip_ref.extractall(tmp_dir)
 
-        # Recursively search for all valid image files
         ref_paths = []
         for root, _, files in os.walk(tmp_dir):
             for f in files:
@@ -128,6 +127,10 @@ if uploaded_zip and query_image:
             except Exception as e:
                 st.warning(f"Skipped {ref_path}: {e}")
 
+        if len(results) == 0:
+            st.error("No valid comparisons could be made.")
+            st.stop()
+
         # Sort results by average similarity
         results.sort(key=lambda x: np.mean(list(x[1].values())), reverse=True)
         top_results = results[:5]
@@ -135,7 +138,7 @@ if uploaded_zip and query_image:
         st.subheader("Top 5 Most Similar Images")
 
         for i, (ref_path, metrics) in enumerate(top_results):
-            ref_img = Image.open(ref_path).convert("RGB")
+            ref_img = Image.open(ref_path).convert("RGB").resize(query_img.size)
             col1, col2 = st.columns([2.5, 1], gap="large")
 
             with col1:
@@ -174,12 +177,10 @@ if uploaded_zip and query_image:
                 q_colors = extract_palette(query_img)
                 r_colors = extract_palette(ref_img)
 
-                # Generate intersection palettes
                 blended = np.mean([q_colors, r_colors], axis=0)
                 shared = np.array([(q_colors[i] + r_colors[i]) / 2 for i in range(min(len(q_colors), len(r_colors)))])
                 weighted = (0.6 * q_colors + 0.4 * r_colors)
 
-                # Display compact square palettes
                 st.image(create_palette_image(blended), caption="Blended Midpoint")
                 st.image(create_palette_image(shared), caption="Shared Hue Range")
                 st.image(create_palette_image(weighted), caption="Weighted Hybrid")
