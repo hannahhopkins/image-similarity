@@ -321,7 +321,8 @@ def compute_all_metrics(query_img: Image.Image, ref_img: Image.Image, resize_to_
         "Entropy Similarity": entropy_similarity(q, r),
         "Edge Complexity": edge_complexity_similarity(q, r),
         "Texture Correlation": texture_glcm_similarity(q, r),
-        "Hue Distribution": hue_distribution_similarity(query_img, rimg, hue_bins, sat_thresh, val_thresh),
+       "Hue Distribution": hue_distribution_similarity(query_img, rimg, hue_bins, sat_thresh, val_thresh),
+
     }
     return metrics
 
@@ -425,7 +426,7 @@ if uploaded_zip and query_image:
 
             # 2) Shared Hue (overlapping bins)
             shared = shared_hue_palette(qimg, rimg, n_out=min(num_colors, 6),
-                                        bins=hue_bins, s_thr=sat_thresh, v_thr=val_thresh)
+                            bins=hue_bins, s_thr=sat_thresh, v_thr=val_thresh)
             st.image(palette_grid(shared), caption="Shared Hue")
             st.caption(
                 "Built from hue bins that both images share (after masking low-saturation/value pixels). "
