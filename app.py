@@ -404,13 +404,43 @@ if uploaded_zip and query_image:
 
                 # concise metric explanations
                 expl = {
-                    "Structural Alignment": "Luminance/contrast/structure agreement (SSIM). Higher means more similar layout and forms.",
-                    "Color Histogram": "3D RGB histogram correlation; similar overall color distributions score higher.",
-                    "Entropy Similarity": "Similarity of image information content/complexity via Shannon entropy.",
-                    "Edge Complexity": "Compares the density of detected edges (Canny)—how visually structured each image is.",
-                    "Texture Correlation": "GLCM contrast match—closer micro-pattern contrast yields higher similarity.",
-                    "Hue Distribution": "Circular hue histogram match with S/V masking and rotation alignment."
-                }
+    "Structural Alignment": (
+        "Measures how closely the two images match in underlying spatial organization. "
+        "This includes similarity in luminance structure, contrast relationships, and the distribution "
+        "of shapes and forms. A high score means the reference image reflects the same pattern of visual weight "
+        "and compositional balance as the query image."
+    ),
+
+    "Color Histogram": (
+        "Compares the overall distribution of colors in the two images, independent of their spatial placement. "
+        "This reflects the dominant hue families, color temperatures, and chroma intensities that define the image's mood. "
+        "A high score indicates that the images share a comparable global color atmosphere."
+    ),
+
+    "Entropy Similarity": (
+        "Measures similarity in information density — how visually complex, detailed, or texturally rich each image is. "
+        "Images with similar entropy feel equally 'busy' or 'calm.' "
+        "A high score means both images operate at the same visual complexity level."
+    ),
+
+    "Edge Complexity": (
+        "Compares the density and distribution of edges, indicating the amount and sharpness of visual structure. "
+        "This relates to how defined or diffuse the image details are — for example, crisp geometric edges vs. soft gradients. "
+        "A high score means the images exhibit a similar degree of definition and structural articulation."
+    ),
+
+    "Texture Correlation": (
+        "Evaluates fine-scale surface patterning using Gray-Level Co-occurrence Matrices (GLCM). "
+        "This metric reflects whether the images share similar microstructures — such as grain, noise, weave, brushstroke, "
+        "or natural surface variation. A high score indicates the images 'feel' similar in tactile character."
+    ),
+
+    "Hue Distribution": (
+        "Compares the dominant hue regions across the color wheel after removing low-saturation and low-value pixels. "
+        "This captures whether the two images emphasize similar color families (e.g., cool blues, warm reds, earth tones). "
+        "A high score indicates overlap in the chromatic identity of the images, not just their brightness or saturation."
+    )
+}
                 for k in metrics:
                     st.markdown(f"**{k} — {metrics[k]:.2f}**  \n{expl[k]}")
 
