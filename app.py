@@ -312,25 +312,39 @@ def palette_shared_hues(q_centers, r_centers, bins, s_min, v_min, pil_q, pil_r, 
 
 def palette_weighted_hybrid(q_centers, q_counts, r_centers, r_counts, query_w, n_out):
     """
-    Weighted Lab blend using query_w (0..1) and cluster sizes as secondary weights.
+    Weighted blend in Lab space WITHOUT collapsing color magnitude.
+    Uses cluster size only to choose which pairs to blend rather than scaling the colors.
     """
-    if len(q_centers)==0:
+    if len(q_centers) == 0:
         return []
+
+    # Match each query color to nearest reference color by hue
     match = nearest_by_hue(q_centers, r_centers) if len(r_centers) else np.zeros(len(q_centers), dtype=int)
-    q_lab = rgb_to_lab(q_centers)
-    r_lab = rgb_to_lab(r_centers[match] if len(r_centers) else q_centers)
-    qc = q_counts[:len(q_centers)].astype(np.float32) if len(q_counts) else np.ones(len(q_centers), dtype=np.float32)
-    rc = r_counts[match].astype(np.float32) if len(r_counts) and len(r_centers) else np.ones(len(q_centers), dtype=np.float32)
-    # normalize cluster weights
-    qc = qc / (qc.sum() + 1e-8)
-    rc = rc / (rc.sum() + 1e-8)
-    # blend
-    wq = query_w
-    wr = 1.0 - query_w
-    blended = q_lab * (wq*qc)[:,None] + r_lab * (wr*rc)[:,None]
-    # rescale to remove magnitude shrinkage (optional simple renorm)
-    # here we simply convert back to rgb
+
+    # Convert to Lab for perceptual blending
+    q_lab = rgb_to_lab(q_centers.astype(np.uint8))
+    if len(r_centers):
+        r_lab = rgb_to_lab(r_centers[match].astype(np.uint8))
+    else:
+        r_lab = q_lab.copy()
+
+    # Normalize cluster counts to use for *selection*, not magnitude scaling
+    if len(q_counts):
+        qc = q_counts[:len(q_centers)].astype(np.float32)
+        qc = qc / (qc.sum() + 1e-8)
+    else:
+        qc = np.ones(len(q_centers), dtype=np.float32)
+
+    # Apply weighted blend per pair: simple convex combination
+    blended = (query_w * q_lab) + ((1.0 - query_w) * r_lab)
+
+    # Select final colors weighted by cluster importance
+    order = np.argsort(-qc)
+    blended = blended[order]
+
+    # Convert back to RGB
     rgb = lab_to_rgb(blended)
+
     return rgb[:n_out].tolist()
 
 # ---------------------------
