@@ -108,9 +108,13 @@ if uploaded_zip and query_image:
 
         ref_paths = []
         for root, _, files in os.walk(tmp_dir):
-            for f in files:
-                if f.lower().endswith((".jpg", ".jpeg", ".png")):
-                    ref_paths.append(os.path.join(root, f))
+    for f in files:
+        # skip hidden macOS metadata and non-image files
+        if f.startswith("._") or "__MACOSX" in root:
+            continue
+        if f.lower().endswith((".jpg", ".jpeg", ".png")):
+            ref_paths.append(os.path.join(root, f))
+
 
         if len(ref_paths) == 0:
             st.error("No valid reference images found. Please ensure your ZIP contains JPG or PNG files.")
