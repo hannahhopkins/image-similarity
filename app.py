@@ -32,32 +32,22 @@ top_k = st.sidebar.slider("Number of matches to display", 1, 10, 5)
 num_colors = st.sidebar.slider("Palette size (colors per image)", 3, 12, 8)
 resize_refs = st.sidebar.checkbox("Resize reference images to match query", value=True)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Hue Similarity Settings")
-hue_bins = st.sidebar.slider("Hue bins", 12, 72, 36, help="Number of bins in the hue histogram (0–180° mapped into N bins).")
-sat_thresh = st.sidebar.slider("Saturation mask threshold", 0.0, 1.0, 0.15, 0.01,
-                               help="Pixels with saturation below this are ignored in Hue calculations.")
-val_thresh = st.sidebar.slider("Value (brightness) mask threshold", 0.0, 1.0, 0.15, 0.01,
-                               help="Pixels with value/brightness below this are ignored in Hue calculations.")
-
-st.sidebar.markdown(
-    "<small>"
-    "<b>Hue bins</b>: resolution of the circular hue histogram. "
-    "<b>Saturation mask</b>: ignores near-gray pixels. "
-    "<b>Value mask</b>: ignores very dark pixels. "
-    "</small>",
-    unsafe_allow_html=True
+st.sidebar.markdown("### Hue / Palette Interpretation Guide")
+st.sidebar.caption(
+    "**Hue bins**: The color wheel is divided into segments. More bins = more precise color comparison. "
+    "Lower bins = broader, simpler grouping of color families.\n\n"
+    "**Saturation mask threshold**: Removes very gray or muted pixels from comparison, so the hue match reflects only colors that visually appear intentional.\n\n"
+    "**Value mask threshold**: Removes very dark pixels where color is difficult to perceive, helping prevent shadows from distorting color similarity."
 )
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Hybrid Palette")
-query_weight = st.sidebar.slider("Hybrid palette: query weight", 0.0, 1.0, 0.60, 0.05,
-                                 help="How much the query palette dominates the weighted hybrid palette (the remainder is the reference).")
-st.sidebar.markdown(
-    "<small>"
-    "The hybrid palette blends the nearest query/reference colors in Lab space using this weight and cluster sizes."
-    "</small>",
-    unsafe_allow_html=True
+st.sidebar.markdown("### Hybrid Palette (Plain-Language Explanation)")
+st.sidebar.caption(
+    "The hybrid palette shows a visual midpoint between the colors of the query image and a selected reference match. "
+    "The slider controls how strongly the palette stays close to the query image vs. shifts toward the reference. "
+    "This is useful for:\n"
+    "- Exploring how two images might relate in mood or tone\n"
+    "- Understanding shared vs. contrasting color tendencies\n"
+    "- Generating a palette that blends influence from both images"
 )
 
 # ---------------------------
@@ -419,44 +409,35 @@ if uploaded_zip and query_image:
                 # concise metric explanations
                 expl = {
     "Structural Alignment": (
-        "Measures how closely the two images match in underlying spatial organization. "
-        "This includes similarity in luminance structure, contrast relationships, and the distribution "
-        "of shapes and forms. A high score means the reference image reflects the same pattern of visual weight "
-        "and compositional balance as the query image."
+        "Compares the underlying arrangement of shapes, edges, and tonal structure. "
+        "High similarity means the two images share a similar balance of visual weight and composition."
     ),
-
     "Color Histogram": (
-        "Compares the overall distribution of colors in the two images, independent of their spatial placement. "
-        "This reflects the dominant hue families, color temperatures, and chroma intensities that define the image's mood. "
-        "A high score indicates that the images share a comparable global color atmosphere."
+        "Compares the overall distribution of colors, regardless of where they appear in the image. "
+        "High similarity indicates the two images evoke a similar color mood or atmosphere."
     ),
-
     "Entropy Similarity": (
-        "Measures similarity in information density — how visually complex, detailed, or texturally rich each image is. "
-        "Images with similar entropy feel equally 'busy' or 'calm.' "
-        "A high score means both images operate at the same visual complexity level."
+        "Measures how dense or sparse the visual information is. "
+        "High similarity means both images feel equally busy, intricate, smooth, or simple."
     ),
-
     "Edge Complexity": (
-        "Compares the density and distribution of edges, indicating the amount and sharpness of visual structure. "
-        "This relates to how defined or diffuse the image details are — for example, crisp geometric edges vs. soft gradients. "
-        "A high score means the images exhibit a similar degree of definition and structural articulation."
+        "Compares how much texture and detail is expressed through edges. "
+        "High similarity indicates both images contain a similar degree of sharpness, detail, or softness."
     ),
-
     "Texture Correlation": (
-        "Evaluates fine-scale surface patterning using Gray-Level Co-occurrence Matrices (GLCM). "
-        "This metric reflects whether the images share similar microstructures — such as grain, noise, weave, brushstroke, "
-        "or natural surface variation. A high score indicates the images 'feel' similar in tactile character."
+        "Evaluates fine-scale surface qualities—patterns, grain, brushstroke, noise, fabric-like structure. "
+        "High similarity suggests the images have a comparable tactile or material feel."
     ),
-
     "Hue Distribution": (
-        "Compares the dominant hue regions across the color wheel after removing low-saturation and low-value pixels. "
-        "This captures whether the two images emphasize similar color families (e.g., cool blues, warm reds, earth tones). "
-        "A high score indicates overlap in the chromatic identity of the images, not just their brightness or saturation."
+        "Compares how color families (reds, greens, blues, etc.) are proportionally emphasized. "
+        "High similarity means the images draw from similar regions of the color wheel."
     )
 }
-                for k in metrics:
-                    st.markdown(f"**{k} — {metrics[k]:.2f}**  \n{expl[k]}")
+        with st.expander("Metric Explanations"):
+            for k in metrics:
+                st.markdown(f"**{k} — {metrics[k]:.2f}**  ")
+                st.caption(expl[k])
+
 
             with colR:
                 st.markdown("#### Intersection Palettes")
