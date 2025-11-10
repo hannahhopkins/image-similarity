@@ -65,20 +65,20 @@ def compute_metrics(img1, img2, resize=True):
 
     img1_np = np.array(img1)
     img2_np = np.array(img2)
+
     img1_gray = cv2.cvtColor(img1_np, cv2.COLOR_RGB2GRAY)
     img2_gray = cv2.cvtColor(img2_np, cv2.COLOR_RGB2GRAY)
 
     # 1. Structural Similarity
     ssim_score = ssim(img1_gray, img2_gray, data_range=img2_gray.max() - img2_gray.min())
 
-    # 2. Color Histogram Similarity
-    hist1 = cv2.calcHist([img1_np], [0, 1, 2], None, [8, 8, 8], [0, 256]*3)
-    hist2 = cv2.calcHist([img2_np], [0, 1, 2], None, [8, 8, 8], [0, 256]*3)
+    # 2. Color Histogram Similarity (3D RGB histogram)
+    hist1 = cv2.calcHist([img1_np], [0, 1, 2], None, [8, 8, 8], [0, 256] * 3)
+    hist2 = cv2.calcHist([img2_np], [0, 1, 2], None, [8, 8, 8], [0, 256] * 3)
     cv2.normalize(hist1, hist1)
     cv2.normalize(hist2, hist2)
     raw_hist_score = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
-    hist_score = (raw_hist_score + 1) / 2  # Normalize from [-1,1] → [0,1]
-
+    hist_score = (raw_hist_score + 1) / 2  # Normalize [-1,1] → [0,1]
 
     # 3. Entropy Similarity
     h1 = cv2.calcHist([img1_gray], [0], None, [256], [0, 256])
@@ -89,39 +89,37 @@ def compute_metrics(img1, img2, resize=True):
     e2 = -np.sum(p2 * np.log2(p2 + 1e-10))
     entropy_sim = 1 - abs(e1 - e2) / max(e1, e2)
 
-    # 4. Edge/Shape Density Similarity
+    # 4. Edge Complexity Similarity
     edges1 = cv2.Canny(img1_gray, 100, 200)
     edges2 = cv2.Canny(img2_gray, 100, 200)
-    edge_score = 1 - np.abs(np.mean(edges1) - np.mean(edges2)) / 255
+    edge_score = 1 - abs(np.mean(edges1) - np.mean(edges2)) / 255
 
-    # 5. Texture Correlation (GLCM)
+    # 5. Texture Correlation (GLCM Contrast)
     glcm1 = graycomatrix(img1_gray, distances=[5], angles=[0], symmetric=True, normed=True)
     glcm2 = graycomatrix(img2_gray, distances=[5], angles=[0], symmetric=True, normed=True)
     tex1 = graycoprops(glcm1, 'contrast')[0, 0]
     tex2 = graycoprops(glcm2, 'contrast')[0, 0]
     texture_sim = 1 - abs(tex1 - tex2) / max(tex1, tex2)
 
-    # 6. Hue Distribution Similarity
+    # 6. Hue Distribution Similarity (Fixed)
     hsv1 = cv2.cvtColor(img1_np, cv2.COLOR_RGB2HSV)
     hsv2 = cv2.cvtColor(img2_np, cv2.COLOR_RGB2HSV)
-    hue_hist1 = cv2.calcHist([hsv1], [0], None, [180], [0, 180])
-    hue_hist2 = cv2.calcHist([hsv2], [0], None, [180], [0, 180])
-    try:
-        raw_hue_score = cv2.EMD(hist_h1.astype(np.float32), hist_h2.astype(np.float32), cv2.DIST_L2)[0]
-        hue_score = max(0, min(1, 1 - raw_hue_score))
-    except:
-        raw_hue_score = cv2.compareHist(hist_h1, hist_h2, cv2.HISTCMP_CORREL)
-        hue_score = (raw_hue_score + 1) / 2
-
+    hist_h1 = cv2.calcHist([hsv1], [0], None, [50], [0, 180])
+    hist_h2 = cv2.calcHist([hsv2], [0], None, [50], [0, 180])
+    cv2.normalize(hist_h1, hist_h1)
+    cv2.normalize(hist_h2, hist_h2)
+    raw_hue_score = cv2.compareHist(hist_h1, hist_h2, cv2.HISTCMP_CORREL)
+    hue_score = (raw_hue_score + 1) / 2  # Normalize [-1,1] → [0,1]
 
     return {
-        "Structural Alignment": ssim_score,
-        "Color Histogram": hist_score,
-        "Entropy Similarity": entropy_sim,
-        "Edge Complexity": edge_score,
-        "Texture Correlation": texture_sim,
-        "Hue Distribution": hue_score
+        "Structural Alignment": float(ssim_score),
+        "Color Histogram": float(hist_score),
+        "Entropy Similarity": float(entropy_sim),
+        "Edge Complexity": float(edge_score),
+        "Texture Correlation": float(texture_sim),
+        "Hue Distribution": float(hue_score)
     }
+
 
 # -------------------------------------------------
 # Plotly Chart
