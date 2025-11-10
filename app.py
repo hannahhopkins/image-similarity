@@ -2,444 +2,448 @@ import os
 import zipfile
 import tempfile
 from pathlib import Path
-from io import BytesIO
-from typing import List, Tuple
 
 import streamlit as st
 import numpy as np
 import cv2
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from skimage.metrics import structural_similarity as ssim
 from skimage.feature import graycomatrix, graycoprops
 from sklearn.cluster import KMeans
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
 
 # ---------------------------
-# Streamlit page config
+# Streamlit config
 # ---------------------------
 st.set_page_config(page_title="Image Similarity Analyzer", layout="wide", initial_sidebar_state="expanded")
 st.title("Image Similarity Analyzer")
 st.write(
     "Upload a ZIP of reference images and a query image. "
-    "The app compares them across multiple metrics (structure, color, texture, edges, entropy, hue) "
+    "The app compares structure, color, texture, edges, entropy and hue distribution, "
     "and shows three distinct intersection palettes."
 )
 
 # ---------------------------
-# Sidebar controls & help text
+# Sidebar controls
 # ---------------------------
-st.sidebar.header("Options")
+st.sidebar.header("User Controls")
 
-top_k = st.sidebar.slider("Matches to display", 1, 12, 5, 1)
-st.sidebar.caption("Number of highest-scoring reference images to display.")
-
-num_colors = st.sidebar.slider("Palette size per image", 3, 12, 6, 1)
-st.sidebar.caption("Number of dominant colors extracted from each image for palette comparison.")
-
+top_k = st.sidebar.slider("Number of matches to display", 1, 10, 5)
+num_colors = st.sidebar.slider("Palette size (colors per image)", 3, 12, 8)
 resize_refs = st.sidebar.checkbox("Resize reference images to match query", value=True)
-st.sidebar.caption("Ensures structural comparisons are made at matching resolutions.")
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("Hue Similarity Settings")
+hue_bins = st.sidebar.slider("Hue bins", 12, 72, 36, help="Number of bins in the hue histogram (0–180° mapped into N bins).")
+sat_thresh = st.sidebar.slider("Saturation mask threshold", 0.0, 1.0, 0.15, 0.01,
+                               help="Pixels with saturation below this are ignored in Hue calculations.")
+val_thresh = st.sidebar.slider("Value (brightness) mask threshold", 0.0, 1.0, 0.15, 0.01,
+                               help="Pixels with value/brightness below this are ignored in Hue calculations.")
 
-hue_bins = st.sidebar.slider("Hue bins (distribution metric)", 12, 72, 36, 6)
-st.sidebar.caption("""
-Determines how finely the hue wheel is divided.  
-Higher values = more sensitive to subtle hue differences.  
-Lower values = broader grouping of color families.
-""")
-
-sat_threshold = st.sidebar.slider("Saturation mask threshold", 0.0, 1.0, 0.15, 0.05)
-st.sidebar.caption("""
-Pixels with saturation below this value are excluded from hue analysis.  
-Use to avoid noise from grayscale or muted regions.
-""")
-
-val_threshold = st.sidebar.slider("Value mask threshold", 0.0, 1.0, 0.15, 0.05)
-st.sidebar.caption("""
-Pixels below this brightness level are excluded from hue analysis.  
-Helps prevent shadows/dark regions from distorting hue measurements.
-""")
+st.sidebar.markdown(
+    "<small>"
+    "<b>Hue bins</b>: resolution of the circular hue histogram. "
+    "<b>Saturation mask</b>: ignores near-gray pixels. "
+    "<b>Value mask</b>: ignores very dark pixels. "
+    "</small>",
+    unsafe_allow_html=True
+)
 
 st.sidebar.markdown("---")
-
-hybrid_query_weight = st.sidebar.slider("Hybrid palette: query weight", 0.5, 0.9, 0.7, 0.05)
-st.sidebar.caption("""
-Controls how strongly the query image influences the Weighted Hybrid palette.  
-Higher values = palette shifts toward the query's dominant colors.  
-Lower values = more balanced blend between query and reference palettes.
-""")
-
-# ---------------------------
-# Utility functions
-# ---------------------------
-def safe_open(path_or_file) -> Image.Image | None:
-    try:
-        img = Image.open(path_or_file).convert("RGB")
-        return img
-    except UnidentifiedImageError:
-        return None
-    except Exception:
-        return None
-
-def extract_zip_paths(uploaded_zip) -> List[str]:
-    tmp_dir = tempfile.mkdtemp()
-    with zipfile.ZipFile(uploaded_zip, "r") as z:
-        z.extractall(tmp_dir)
-    image_paths = []
-    for root, _, files in os.walk(tmp_dir):
-        if "__MACOSX" in root:
-            continue
-        for f in files:
-            if f.startswith("._"):
-                continue
-            if Path(f).suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
-                image_paths.append(os.path.join(root, f))
-    return image_paths
+st.sidebar.subheader("Hybrid Palette")
+query_weight = st.sidebar.slider("Hybrid palette: query weight", 0.0, 1.0, 0.60, 0.05,
+                                 help="How much the query palette dominates the weighted hybrid palette (the remainder is the reference).")
+st.sidebar.markdown(
+    "<small>"
+    "The hybrid palette blends the nearest query/reference colors in Lab space using this weight and cluster sizes."
+    "</small>",
+    unsafe_allow_html=True
+)
 
 # ---------------------------
-# Palette extraction (k-means)
+# Helpers
 # ---------------------------
-def extract_palette_kmeans(img: Image.Image, n_colors: int) -> np.ndarray:
-    arr = np.array(img.resize((200, 200))).reshape(-1, 3).astype(np.float32)
-    if arr.size == 0:
-        return np.zeros((n_colors, 3), dtype=np.uint8)
-    k = min(n_colors, max(1, arr.shape[0] // 50))
+def open_rgb(img_path_or_file):
+    """Open as RGB PIL.Image."""
+    if isinstance(img_path_or_file, (str, Path)):
+        img = Image.open(img_path_or_file)
+    else:
+        img = Image.open(img_path_or_file)
+    return img.convert("RGB")
+
+def kmeans_palette(pil_img, k):
+    """Return (centers_rgb[K,3], counts[K]) ordered by descending count."""
+    arr = np.array(pil_img.resize((200, 200))).reshape(-1, 3).astype(np.float32)
+    k = int(max(1, min(k, len(arr)//20)))
     km = KMeans(n_clusters=k, n_init=10, random_state=0)
     labels = km.fit_predict(arr)
-    centers = km.cluster_centers_.astype(np.float32)
+    centers = km.cluster_centers_.astype(int)
     counts = np.bincount(labels)
     order = np.argsort(-counts)
     centers = centers[order]
-    if centers.shape[0] < n_colors:
-        pad = np.tile(centers.mean(axis=0, keepdims=True), (n_colors - centers.shape[0], 1))
-        centers = np.vstack([centers, pad])
-    return np.clip(centers[:n_colors], 0, 255).astype(np.uint8)
+    counts = counts[order]
+    return centers, counts
 
-def palette_grid(colors: np.ndarray, squares: int | None = None) -> BytesIO:
-    """Render a compact square palette image."""
-    if squares is None:
-        squares = colors.shape[0]
-    cols = int(np.ceil(np.sqrt(squares)))
-    rows = int(np.ceil(squares / cols))
-    sw = 36
-    canvas = np.zeros((rows * sw, cols * sw, 3), dtype=np.uint8)
-    for i in range(squares):
-        r = i // cols
-        c = i % cols
-        canvas[r*sw:(r+1)*sw, c*sw:(c+1)*sw] = colors[i]
-    buf = BytesIO()
-    Image.fromarray(canvas).save(buf, format="PNG")
-    buf.seek(0)
-    return buf
+def palette_image_squares(colors_rgb, square_size=40):
+    """Create a horizontal strip of square swatches."""
+    if len(colors_rgb) == 0:
+        colors_rgb = [(128, 128, 128)]
+    cols = len(colors_rgb)
+    out = np.zeros((square_size, square_size*cols, 3), dtype=np.uint8)
+    for i, c in enumerate(colors_rgb):
+        out[:, i*square_size:(i+1)*square_size] = np.array(c, dtype=np.uint8)
+    return Image.fromarray(out)
 
-# ---------------------------
-# Color space helpers (Lab / HSV)
-# ---------------------------
-def rgb_to_lab_arr(rgb_arr_uint8: np.ndarray) -> np.ndarray:
-    """rgb_arr_uint8: (N,3) uint8 -> Lab (N,3) float"""
-    import skimage.color as skc
-    rgb01 = (rgb_arr_uint8.astype(np.float32) / 255.0).reshape(-1, 1, 3)
-    lab = skc.rgb2lab(rgb01).reshape(-1, 3)
-    return lab
+def to_gray(pil_img, size=None):
+    if size is not None:
+        pil_img = pil_img.resize(size)
+    arr = np.array(pil_img.convert("RGB"))
+    return cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
 
-def lab_to_rgb_arr(lab_arr: np.ndarray) -> np.ndarray:
-    import skimage.color as skc
-    lab = lab_arr.reshape(-1, 1, 3)
-    rgb01 = skc.lab2rgb(lab).reshape(-1, 3)
-    return np.clip((rgb01 * 255).round(), 0, 255).astype(np.uint8)
-
-# ---------------------------
-# Intersection palettes
-# ---------------------------
-def blended_midpoint_palette(query_colors: np.ndarray, ref_colors: np.ndarray, n_out: int) -> np.ndarray:
-    # nearest neighbors in Lab, then midpoint in Lab
-    q_lab = rgb_to_lab_arr(query_colors)
-    r_lab = rgb_to_lab_arr(ref_colors)
-    out = []
-    for i in range(min(n_out, len(q_lab))):
-        d = np.linalg.norm(r_lab - q_lab[i], axis=1)
-        j = int(np.argmin(d)) if len(d) else 0
-        mid = (q_lab[i] + r_lab[j]) / 2.0
-        out.append(mid)
-    if not out:
-        return query_colors[:n_out]
-    out_lab = np.vstack(out)
-    return lab_to_rgb_arr(out_lab)[:n_out]
-
-def shared_hue_palette(query_img: Image.Image, ref_img: Image.Image, n_out: int,
-                       bins: int, s_thr: float, v_thr: float) -> np.ndarray:
-    # Build overlapping hue bins and use HSV medians of overlapping bins as swatches
-    def hue_hist_and_bins(img: Image.Image):
-        hsv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2HSV).astype(np.float32)
-        h = hsv[:, :, 0]            # 0..180
-        s = hsv[:, :, 1] / 255.0
-        v = hsv[:, :, 2] / 255.0
-        mask = (s >= s_thr) & (v >= v_thr)
-        hh = h[mask].flatten()
-        if hh.size == 0:
-            hh = h.flatten()
-        hist, edges = np.histogram(hh, bins=bins, range=(0, 180), density=False)
-        return hist.astype(np.float32), edges, hsv, mask
-    h1, e1, hsv1, m1 = hue_hist_and_bins(query_img)
-    h2, e2, hsv2, m2 = hue_hist_and_bins(ref_img)
-    # find overlapping bins (both nonzero)
-    overlap_idx = np.where((h1 > 0) & (h2 > 0))[0]
-    if overlap_idx.size == 0:
-        # fallback: take top bins of query
-        top_idx = np.argsort(-h1)[:n_out]
-        hues = (e1[top_idx] + e1[top_idx+1]) / 2.0
-        sv = np.array([0.7, 0.8])  # default S,V
-        cols = []
-        for hu in hues[:n_out]:
-            cols.append(cv2.cvtColor(np.uint8([[[hu, int(sv[0]*255), int(sv[1]*255)]]]), cv2.COLOR_HSV2RGB)[0,0])
-        return np.array(cols, dtype=np.uint8)
-
-    # take up to n_out overlapping bins with largest combined counts
-    combined = h1 + h2
-    chosen = overlap_idx[np.argsort(-combined[overlap_idx])[:n_out]]
-    cols = []
-    for idx in chosen:
-        lo, hi = e1[idx], e1[idx+1]
-        # collect pixels in this bin for each image
-        mask1 = (hsv1[:, :, 0] >= lo) & (hsv1[:, :, 0] < hi)
-        mask2 = (hsv2[:, :, 0] >= lo) & (hsv2[:, :, 0] < hi)
-        # combine HSV pixels (masked by S/V thresholds already in hist calc)
-        hhsv = []
-        if mask1.any():
-            hhsv.append(hsv1[mask1])
-        if mask2.any():
-            hhsv.append(hsv2[mask2])
-        if len(hhsv) == 0:
-            # fallback median
-            hu = (lo + hi) / 2.0
-            cols.append(cv2.cvtColor(np.uint8([[[hu, 180, 200]]]), cv2.COLOR_HSV2RGB)[0,0])
-        else:
-            hhsv = np.vstack(hhsv)
-            # median HSV within the overlapping bin
-            med = np.median(hhsv, axis=0)
-            hu, sa, va = float(med[0]), float(med[1]), float(med[2])
-            rgb = cv2.cvtColor(np.uint8([[[hu, sa, va]]]), cv2.COLOR_HSV2RGB)[0,0]
-            cols.append(rgb)
-    return np.array(cols, dtype=np.uint8)[:n_out]
-
-def weighted_hybrid_palette(query_colors: np.ndarray, ref_colors: np.ndarray, n_out: int, wq: float) -> np.ndarray:
-    # convex blend in Lab with user weight
-    q_lab = rgb_to_lab_arr(query_colors[:n_out])
-    r_lab = rgb_to_lab_arr(ref_colors[:n_out])
-    # pad if ref has fewer
-    if r_lab.shape[0] < q_lab.shape[0]:
-        r_lab = np.vstack([r_lab, np.tile(r_lab.mean(axis=0), (q_lab.shape[0] - r_lab.shape[0], 1))])
-    blended = wq * q_lab + (1.0 - wq) * r_lab
-    return lab_to_rgb_arr(blended)[:n_out]
+def safe_norm01(x):
+    return float(np.clip(x, 0.0, 1.0))
 
 # ---------------------------
 # Metrics
 # ---------------------------
-def structural_similarity(img1_rgb: np.ndarray, img2_rgb: np.ndarray) -> float:
-    g1 = cv2.cvtColor(img1_rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
-    g2 = cv2.cvtColor(img2_rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
-    dr = max(1.0, float(g2.max() - g2.min()))
-    return float(np.clip(ssim(g1, g2, data_range=dr), 0.0, 1.0))
+def structural_similarity(pil_q, pil_r):
+    if pil_r.size != pil_q.size:
+        pil_r = pil_r.resize(pil_q.size)
+    gq = to_gray(pil_q)
+    gr = to_gray(pil_r)
+    dr = float(gr.max() - gr.min())
+    if dr <= 0:
+        dr = 1.0
+    return safe_norm01(ssim(gq, gr, data_range=dr))
 
-def color_hist_similarity(img1_rgb: np.ndarray, img2_rgb: np.ndarray, bins=8) -> float:
-    h1 = cv2.calcHist([img1_rgb], [0,1,2], None, [bins,bins,bins], [0,256,0,256,0,256])
-    h2 = cv2.calcHist([img2_rgb], [0,1,2], None, [bins,bins,bins], [0,256,0,256,0,256])
-    cv2.normalize(h1, h1); cv2.normalize(h2, h2)
-    corr = cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL)  # [-1,1]
-    return float(np.clip((corr + 1.0) / 2.0, 0.0, 1.0))
+def color_hist_similarity(pil_q, pil_r, bins=8):
+    """3D RGB histogram correlation mapped from [-1,1] → [0,1]."""
+    if pil_r.size != pil_q.size:
+        pil_r = pil_r.resize(pil_q.size)
+    aq = np.array(pil_q)
+    ar = np.array(pil_r)
+    hq = cv2.calcHist([aq], [0,1,2], None, [bins,bins,bins], [0,256]*3)
+    hr = cv2.calcHist([ar], [0,1,2], None, [bins,bins,bins], [0,256]*3)
+    cv2.normalize(hq, hq)
+    cv2.normalize(hr, hr)
+    raw = cv2.compareHist(hq, hr, cv2.HISTCMP_CORREL)  # [-1,1]
+    return float(np.clip((raw + 1.0)/2.0, 0.0, 1.0))
 
-def entropy_similarity(img1_rgb: np.ndarray, img2_rgb: np.ndarray) -> float:
-    g1 = cv2.cvtColor(img1_rgb, cv2.COLOR_RGB2GRAY)
-    g2 = cv2.cvtColor(img2_rgb, cv2.COLOR_RGB2GRAY)
-    h1 = cv2.calcHist([g1], [0], None, [256], [0,256]); h1 = h1 / max(1, h1.sum())
-    h2 = cv2.calcHist([g2], [0], None, [256], [0,256]); h2 = h2 / max(1, h2.sum())
-    e1 = float(-(h1*(np.log2(h1+1e-12))).sum()); e2 = float(-(h2*(np.log2(h2+1e-12))).sum())
-    if max(e1, e2) <= 1e-9:
-        return 0.0
-    return float(np.clip(1.0 - abs(e1-e2)/max(e1,e2), 0.0, 1.0))
+def entropy_similarity(pil_q, pil_r):
+    """Shannon entropy similarity of grayscale histograms."""
+    if pil_r.size != pil_q.size:
+        pil_r = pil_r.resize(pil_q.size)
+    gq = to_gray(pil_q)
+    gr = to_gray(pil_r)
+    hq = cv2.calcHist([gq], [0], None, [256], [0,256])
+    hr = cv2.calcHist([gr], [0], None, [256], [0,256])
+    hq = hq / (hq.sum() + 1e-8)
+    hr = hr / (hr.sum() + 1e-8)
+    eq = -np.sum(hq * np.log2(hq + 1e-12))
+    er = -np.sum(hr * np.log2(hr + 1e-12))
+    return safe_norm01(1.0 - abs(eq - er) / max(eq, er + 1e-8))
 
-def edge_complexity_similarity(img1_rgb: np.ndarray, img2_rgb: np.ndarray) -> float:
-    g1 = cv2.cvtColor(img1_rgb, cv2.COLOR_RGB2GRAY)
-    g2 = cv2.cvtColor(img2_rgb, cv2.COLOR_RGB2GRAY)
-    e1 = cv2.Canny(g1, 100, 200); e2 = cv2.Canny(g2, 100, 200)
-    return float(np.clip(1.0 - abs(e1.mean() - e2.mean())/255.0, 0.0, 1.0))
+def edge_complexity_similarity(pil_q, pil_r):
+    """Compare Canny edge density."""
+    if pil_r.size != pil_q.size:
+        pil_r = pil_r.resize(pil_q.size)
+    gq = to_gray(pil_q)
+    gr = to_gray(pil_r)
+    e1 = cv2.Canny(gq, 100, 200)
+    e2 = cv2.Canny(gr, 100, 200)
+    dens1 = e1.mean()/255.0
+    dens2 = e2.mean()/255.0
+    return safe_norm01(1.0 - abs(dens1 - dens2))
 
-def texture_glcm_similarity(img1_rgb: np.ndarray, img2_rgb: np.ndarray) -> float:
-    g1 = cv2.cvtColor(img1_rgb, cv2.COLOR_RGB2GRAY)
-    g2 = cv2.cvtColor(img2_rgb, cv2.COLOR_RGB2GRAY)
-    g1u = g1.astype(np.uint8); g2u = g2.astype(np.uint8)
+def texture_correlation_similarity(pil_q, pil_r):
+    """GLCM contrast match: closer contrast → higher similarity."""
+    if pil_r.size != pil_q.size:
+        pil_r = pil_r.resize(pil_q.size)
+    gq = to_gray(pil_q)
+    gr = to_gray(pil_r)
     try:
-        gl1 = graycomatrix(g1u, [2], [0], symmetric=True, normed=True)
-        gl2 = graycomatrix(g2u, [2], [0], symmetric=True, normed=True)
-        c1 = float(graycoprops(gl1, "contrast")[0,0])
-        c2 = float(graycoprops(gl2, "contrast")[0,0])
-        denom = max(c1 + c2, 1e-9)
-        sim = 1.0 - abs(c1 - c2) / denom
-        return float(np.clip(sim, 0.0, 1.0))
+        g1 = graycomatrix(gq, [2], [0], symmetric=True, normed=True)
+        g2 = graycomatrix(gr, [2], [0], symmetric=True, normed=True)
+        c1 = float(graycoprops(g1, 'contrast')[0,0])
+        c2 = float(graycoprops(g2, 'contrast')[0,0])
+        if max(c1, c2) <= 1e-8:
+            return 1.0
+        return safe_norm01(1.0 - abs(c1 - c2) / max(c1, c2))
     except Exception:
         return 0.0
 
-def hue_distribution_similarity(img1: Image.Image, img2: Image.Image,
-                                bins: int, s_thr: float, v_thr: float) -> float:
-    # Build masked hue histograms and compute maximum cosine similarity under circular shift
-    def masked_hues(img):
-        hsv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2HSV).astype(np.float32)
-        h = hsv[:,:,0]    # [0,180)
-        s = hsv[:,:,1]/255.0
+def hue_distribution_similarity(pil_q, pil_r, bins=36, s_min=0.15, v_min=0.15):
+    """Circular hue histogram similarity with SV masking and rotation search."""
+    if pil_r.size != pil_q.size:
+        pil_r = pil_r.resize(pil_q.size)
+
+    def hue_hist(pil_img):
+        rgb = np.array(pil_img)
+        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
+        h = hsv[:,:,0]          # 0..180
+        s = hsv[:,:,1]/255.0    # 0..1
         v = hsv[:,:,2]/255.0
-        mask = (s >= s_thr) & (v >= v_thr)
-        hh = h[mask]
-        if hh.size == 0:
-            hh = h.flatten()
-        hist, _ = np.histogram(hh, bins=bins, range=(0,180), density=False)
+        mask = (s >= s_min) & (v >= v_min)
+        if mask.sum() < 10:
+            return np.zeros(bins, dtype=np.float32)
+        hsel = h[mask].flatten()
+        hist, _ = np.histogram(hsel, bins=bins, range=(0,180))
         hist = hist.astype(np.float32)
-        if hist.sum() == 0:
-            hist[:] = 1.0
-        hist /= hist.sum()
+        if hist.sum() > 0:
+            hist /= hist.sum()
         return hist
-    h1 = masked_hues(img1)
-    h2 = masked_hues(img2)
 
-    def cosine(a,b):
-        denom = (np.linalg.norm(a)*np.linalg.norm(b)) + 1e-12
-        return float(np.dot(a,b)/denom)
+    hq = hue_hist(pil_q)
+    hr = hue_hist(pil_r)
 
+    if hq.sum() == 0 or hr.sum() == 0:
+        return 0.0
+
+    # circular rotation search: take the best correlation across rotations
     best = -1.0
     for shift in range(bins):
-        sim = cosine(h1, np.roll(h2, shift))
-        if sim > best:
-            best = sim
-    return float(np.clip(best, 0.0, 1.0))
-
-def compute_all_metrics(query_img: Image.Image, ref_img: Image.Image, resize_to_query: bool) -> dict:
-    rimg = ref_img.resize(query_img.size) if resize_to_query else ref_img
-    q = np.array(query_img); r = np.array(rimg)
-    metrics = {
-        "Structural Alignment": structural_similarity(q, r),
-        "Color Histogram": color_hist_similarity(q, r, bins=8),
-        "Entropy Similarity": entropy_similarity(q, r),
-        "Edge Complexity": edge_complexity_similarity(q, r),
-        "Texture Correlation": texture_glcm_similarity(q, r),
-       "Hue Distribution": hue_distribution_similarity(query_img, rimg, hue_bins, sat_thresh, val_thresh),
-
-    }
-    return metrics
-
-METRIC_DEFS = {
-    "Structural Alignment": "SSIM-based similarity of spatial structure (luminance, contrast, local form).",
-    "Color Histogram": "Correlation of 3D RGB histograms (overall color balance).",
-    "Entropy Similarity": "Similarity of information density / tonal complexity.",
-    "Edge Complexity": "Similarity of edge density and distribution (Canny).",
-    "Texture Correlation": "Similarity of micro-patterns via GLCM contrast.",
-    "Hue Distribution": "Similarity of dominant hue proportions around the color wheel (circular).",
-}
+        hr_roll = np.roll(hr, shift)
+        corr = np.dot(hq, hr_roll) / (np.linalg.norm(hq)*np.linalg.norm(hr_roll) + 1e-12)  # cosine sim in [-1,1]
+        best = max(best, corr)
+    return float(np.clip((best + 1.0)/2.0, 0.0, 1.0))
 
 # ---------------------------
-# Plotly metric bar
+# Plotly bar chart
 # ---------------------------
-def plotly_metric_bar(metrics: dict):
+def metric_bar(metrics: dict):
     names = list(metrics.keys())
     vals = [float(metrics[k]) for k in names]
-    tooltips = [f"<b>{n}</b><br>{METRIC_DEFS.get(n,'')}" for n in names]
     fig = go.Figure(go.Bar(
-        x=vals, y=names, orientation="h",
-        text=[f"{v:.2f}" for v in vals], textposition="outside",
-        marker=dict(color=vals, colorscale="RdYlGn", cmin=0, cmax=1),
-        hovertemplate=tooltips
+        x=vals, y=names, orientation='h',
+        text=[f"{v:.2f}" for v in vals], textposition='outside',
+        marker=dict(color=vals, colorscale='RdYlGn', cmin=0, cmax=1)
     ))
     fig.update_layout(
-        xaxis=dict(range=[0,1], title="Similarity"),
-        margin=dict(l=80, r=20, t=20, b=20),
-        height= 30*len(names) + 60,
+        xaxis=dict(range=[0,1], title="Similarity (0–1)"),
         yaxis=dict(autorange="reversed"),
-        showlegend=False, template="simple_white"
+        height=28*len(names) + 60,
+        margin=dict(l=80, r=20, t=10, b=10),
+        template="simple_white",
+        showlegend=False
     )
     return fig
 
 # ---------------------------
-# Upload UI
+# Intersection palettes
+# ---------------------------
+def rgb_to_lab(rgb_arr_uint8):
+    """rgb_arr_uint8: (N,3) uint8 → Lab float."""
+    rgb = (rgb_arr_uint8.reshape(-1,1,3).astype(np.float32))/255.0
+    return cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB).reshape(-1,3)
+
+def lab_to_rgb(lab_arr):
+    lab = lab_arr.reshape(-1,1,3).astype(np.float32)
+    rgb = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB).reshape(-1,3)
+    return np.clip((rgb*255.0).round().astype(np.uint8), 0, 255)
+
+def nearest_by_hue(src_colors, dst_colors):
+    """Map each color in src to index of nearest hue in dst."""
+    def hues(rgb_colors):
+        hsv = cv2.cvtColor(rgb_colors.reshape(-1,1,3).astype(np.uint8), cv2.COLOR_RGB2HSV).reshape(-1,3)
+        return hsv[:,0].astype(np.float32)  # 0..180
+    h_src = hues(src_colors)
+    h_dst = hues(dst_colors)
+    idxs = []
+    for h in h_src:
+        diffs = np.minimum(np.abs(h_dst-h), 180-np.abs(h_dst-h))
+        idxs.append(int(np.argmin(diffs)))
+    return np.array(idxs, dtype=int)
+
+def palette_blended_midpoint(q_centers, r_centers, n_out):
+    """Lab midpoint of nearest hues (query → reference)."""
+    if len(q_centers)==0:
+        return []
+    match = nearest_by_hue(q_centers, r_centers) if len(r_centers) else np.zeros(len(q_centers), dtype=int)
+    q_lab = rgb_to_lab(q_centers)
+    r_lab = rgb_to_lab(r_centers[match] if len(r_centers) else q_centers)
+    mid = (q_lab + r_lab)/2.0
+    rgb = lab_to_rgb(mid)
+    return rgb[:n_out].tolist()
+
+def palette_shared_hues(q_centers, r_centers, bins, s_min, v_min, pil_q, pil_r, n_out):
+    """
+    Build hue histograms with masks, find overlapping bins, then pick representative colors
+    from the palettes that fall into those bins. Produces fewer but 'shared' hues.
+    """
+    def hue_hist_bins(pil_img):
+        rgb = np.array(pil_img)
+        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
+        h = hsv[:,:,0]
+        s = hsv[:,:,1]/255.0
+        v = hsv[:,:,2]/255.0
+        mask = (s >= s_min) & (v >= v_min)
+        if mask.sum() < 10:
+            return np.zeros(bins, dtype=np.float32)
+        hist, _ = np.histogram(h[mask], bins=bins, range=(0,180))
+        return hist.astype(np.float32)
+
+    hq = hue_hist_bins(pil_q)
+    hr = hue_hist_bins(pil_r)
+    overlap = (hq>0) & (hr>0)
+    if overlap.sum() == 0:
+        # fall back to simple average if nothing overlaps
+        return ((q_centers.astype(np.float32) + r_centers.astype(np.float32))/2.0)[:n_out].astype(np.uint8).tolist()
+
+    # bin centers in degrees
+    bin_edges = np.linspace(0,180,bins+1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+    shared_centers = bin_centers[overlap]
+    # pick nearest palette color in either palette to each shared hue center
+    def pick_from_palette(palette_rgb, target_h):
+        hsv = cv2.cvtColor(palette_rgb.reshape(-1,1,3).astype(np.uint8), cv2.COLOR_RGB2HSV).reshape(-1,3)
+        h = hsv[:,0].astype(np.float32)
+        diffs = np.minimum(np.abs(h-target_h), 180-np.abs(h-target_h))
+        return palette_rgb[int(np.argmin(diffs))]
+    out = []
+    for h in shared_centers:
+        qc = pick_from_palette(q_centers, h)
+        rc = pick_from_palette(r_centers, h)
+        out.append(((qc.astype(np.float32)+rc.astype(np.float32))/2.0).astype(np.uint8))
+    # limit / pad
+    out = out[:n_out]
+    while len(out) < n_out:
+        out.append(q_centers[0] if len(q_centers) else np.array([128,128,128], dtype=np.uint8))
+    return np.stack(out, axis=0).tolist()
+
+def palette_weighted_hybrid(q_centers, q_counts, r_centers, r_counts, query_w, n_out):
+    """
+    Weighted Lab blend using query_w (0..1) and cluster sizes as secondary weights.
+    """
+    if len(q_centers)==0:
+        return []
+    match = nearest_by_hue(q_centers, r_centers) if len(r_centers) else np.zeros(len(q_centers), dtype=int)
+    q_lab = rgb_to_lab(q_centers)
+    r_lab = rgb_to_lab(r_centers[match] if len(r_centers) else q_centers)
+    qc = q_counts[:len(q_centers)].astype(np.float32) if len(q_counts) else np.ones(len(q_centers), dtype=np.float32)
+    rc = r_counts[match].astype(np.float32) if len(r_counts) and len(r_centers) else np.ones(len(q_centers), dtype=np.float32)
+    # normalize cluster weights
+    qc = qc / (qc.sum() + 1e-8)
+    rc = rc / (rc.sum() + 1e-8)
+    # blend
+    wq = query_w
+    wr = 1.0 - query_w
+    blended = q_lab * (wq*qc)[:,None] + r_lab * (wr*rc)[:,None]
+    # rescale to remove magnitude shrinkage (optional simple renorm)
+    # here we simply convert back to rgb
+    rgb = lab_to_rgb(blended)
+    return rgb[:n_out].tolist()
+
+# ---------------------------
+# File upload
 # ---------------------------
 uploaded_zip = st.file_uploader("Upload a ZIP of Reference Images", type=["zip"])
-query_image = st.file_uploader("Upload a Query Image", type=["jpg","jpeg","png","bmp","tiff","webp"])
+query_image = st.file_uploader("Upload a Query Image", type=["jpg","jpeg","png"])
 
 if uploaded_zip and query_image:
-    ref_paths = extract_zip_paths(uploaded_zip)
-    if not ref_paths:
-        st.error("No valid reference images found. Make sure your ZIP contains JPG/PNG (not just folders).")
-        st.stop()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with zipfile.ZipFile(uploaded_zip, "r") as zf:
+            zf.extractall(tmp_dir)
 
-    qimg = safe_open(query_image)
-    if qimg is None:
-        st.error("Could not open query image.")
-        st.stop()
+        ref_paths = []
+        for root, _, files in os.walk(tmp_dir):
+            if "__MACOSX" in root:
+                continue
+            for f in files:
+                if f.startswith("._"):
+                    continue
+                if f.lower().endswith((".jpg",".jpeg",".png")):
+                    ref_paths.append(os.path.join(root, f))
 
-    # Compute metrics for all refs
-    results = []
-    for p in ref_paths:
-        rimg = safe_open(p)
-        if rimg is None:
-            continue
-        try:
-            metrics = compute_all_metrics(qimg, rimg, resize_refs)
-            score = float(np.mean(list(metrics.values())))
-            results.append((p, rimg, metrics, score))
-        except Exception as e:
-            st.warning(f"Skipped {p}: {e}")
+        if not ref_paths:
+            st.error("No valid reference images found in the ZIP (JPG/PNG).")
+            st.stop()
 
-    if not results:
-        st.error("No valid comparisons could be made.")
-        st.stop()
+        query_img = open_rgb(query_image)
+        results = []
 
-    results.sort(key=lambda t: t[3], reverse=True)
-    top = results[:top_k]
+        # Compute metrics per reference
+        for p in ref_paths:
+            try:
+                ref_img = open_rgb(p)
+                if resize_refs:
+                    ref_img = ref_img.resize(query_img.size)
 
-    st.subheader(f"Top {len(top)} Matches")
-    for idx, (path, rimg, metrics, score) in enumerate(top, start=1):
-        if resize_refs:
-            rimg = rimg.resize(qimg.size)
+                metrics = {
+                    "Structural Alignment": structural_similarity(query_img, ref_img),
+                    "Color Histogram":    color_hist_similarity(query_img, ref_img, bins=8),
+                    "Entropy Similarity": entropy_similarity(query_img, ref_img),
+                    "Edge Complexity":    edge_complexity_similarity(query_img, ref_img),
+                    "Texture Correlation":texture_correlation_similarity(query_img, ref_img),
+                    "Hue Distribution":   hue_distribution_similarity(
+                        query_img, ref_img,
+                        bins=hue_bins, s_min=sat_thresh, v_min=val_thresh
+                    )
+                }
+                score = float(np.mean(list(metrics.values())))
+                results.append((p, ref_img, metrics, score))
+            except Exception as e:
+                st.warning(f"Skipped {p}: {e}")
 
-        col1, col2 = st.columns([2.5, 1.2], gap="large")
+        if not results:
+            st.error("No valid comparisons could be made.")
+            st.stop()
 
-        with col1:
-            st.markdown(f"### Match {idx}: {os.path.basename(path)} — Overall {score*100:.1f}%")
-            st.image([qimg, rimg], caption=["Query", "Reference"], use_container_width=True)
-            st.plotly_chart(plotly_metric_bar(metrics), use_container_width=True)
+        # Sort by average similarity
+        results.sort(key=lambda x: x[3], reverse=True)
+        top_results = results[:top_k]
 
-            # metric text
-            for name, val in metrics.items():
-                st.markdown(f"**{name} ({val:.2f})** — {METRIC_DEFS[name]}")
+        st.subheader(f"Top {len(top_results)} Matches")
 
-        with col2:
-            st.markdown("#### Intersection Palettes")
+        for i, (ref_path, ref_img, metrics, score) in enumerate(top_results, start=1):
+            colL, colR = st.columns([2.4, 1.2], gap="large")
 
-            q_cols = extract_palette_kmeans(qimg, num_colors)
-            r_cols = extract_palette_kmeans(rimg, num_colors)
+            with colL:
+                st.markdown(f"### Match {i}: {os.path.basename(ref_path)} — Overall {score:.2f}")
+                st.image([query_img, ref_img], caption=["Query", "Reference"], use_container_width=True)
+                st.plotly_chart(metric_bar(metrics), use_container_width=True)
 
-            # 1) Blended Midpoint (Lab)
-            blended = blended_midpoint_palette(q_cols, r_cols, n_out=min(num_colors, 6))
-            st.image(palette_grid(blended), caption="Blended Midpoint")
-            st.caption(
-                "Nearest colors from each palette are paired in Lab space and averaged. "
-                "This emphasizes balanced overlaps in perceptual lightness and chroma."
-            )
+                # concise metric explanations
+                expl = {
+                    "Structural Alignment": "Luminance/contrast/structure agreement (SSIM). Higher means more similar layout and forms.",
+                    "Color Histogram": "3D RGB histogram correlation; similar overall color distributions score higher.",
+                    "Entropy Similarity": "Similarity of image information content/complexity via Shannon entropy.",
+                    "Edge Complexity": "Compares the density of detected edges (Canny)—how visually structured each image is.",
+                    "Texture Correlation": "GLCM contrast match—closer micro-pattern contrast yields higher similarity.",
+                    "Hue Distribution": "Circular hue histogram match with S/V masking and rotation alignment."
+                }
+                for k in metrics:
+                    st.markdown(f"**{k} — {metrics[k]:.2f}**  \n{expl[k]}")
 
-            # 2) Shared Hue (overlapping bins)
-            shared = shared_hue_palette(qimg, rimg, n_out=min(num_colors, 6),
-                            bins=hue_bins, s_thr=sat_thresh, v_thr=val_thresh)
-            st.image(palette_grid(shared), caption="Shared Hue")
-            st.caption(
-                "Built from hue bins that both images share (after masking low-saturation/value pixels). "
-                "Each swatch represents a median HSV from an overlapping hue region."
-            )
+            with colR:
+                st.markdown("#### Intersection Palettes")
 
-            # 3) Weighted Hybrid (Lab convex blend)
-            hybrid = weighted_hybrid_palette(q_cols, r_cols, n_out=min(num_colors, 6), wq=hybrid_query_weight)
-            st.image(palette_grid(hybrid), caption="Weighted Hybrid")
-            st.caption(
-                "Convex blend in Lab with the selected query weight. "
-                "Higher query weight retains query character; lower weight brings the reference forward."
-            )
+                # palettes for query & ref
+                q_centers, q_counts = kmeans_palette(query_img, num_colors)
+                r_centers, r_counts = kmeans_palette(ref_img,   num_colors)
+
+                # 1) Blended Midpoint (Lab)
+                pal_mid = palette_blended_midpoint(q_centers, r_centers, n_out=min(num_colors, 6))
+                st.image(palette_image_squares(pal_mid), caption="Blended Midpoint")
+                st.caption("A perceptual (Lab) midpoint between nearest query/reference hues — shows balanced shared tonality.")
+
+                # 2) Shared Hues Only
+                pal_shared = palette_shared_hues(
+                    q_centers.astype(np.uint8),
+                    r_centers.astype(np.uint8),
+                    bins=hue_bins, s_min=sat_thresh, v_min=val_thresh,
+                    pil_q=query_img, pil_r=ref_img, n_out=min(num_colors, 6)
+                )
+                st.image(palette_image_squares(pal_shared), caption="Shared Hues")
+                st.caption("Only hues present in both images (by masked hue hist overlap), averaged for a concise common palette.")
+
+                # 3) Weighted Hybrid (Lab)
+                pal_hybrid = palette_weighted_hybrid(
+                    q_centers.astype(np.uint8), q_counts,
+                    r_centers.astype(np.uint8), r_counts,
+                    query_w=float(query_weight), n_out=min(num_colors, 6)
+                )
+                st.image(palette_image_squares(pal_hybrid), caption="Weighted Hybrid")
+                st.caption("Nearest hues blended in Lab using cluster sizes and your Hybrid 'Query weight' (sidebar).")
 
 else:
     st.info("Upload your ZIP of reference images and a query image to begin.")
