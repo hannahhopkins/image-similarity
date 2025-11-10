@@ -5,4 +5,3 @@ scikit-image
 scikit-learn
 pillow
 plotly
-matplotlib
