@@ -31,26 +31,44 @@ st.write(
 # ---------------------------
 st.sidebar.header("Options")
 
-top_k = st.sidebar.slider("Top matches to display", 1, 10, 5)
-num_colors = st.sidebar.slider("Palette size (k-means colors per image)", 3, 12, 6)
+top_k = st.sidebar.slider("Matches to display", 1, 12, 5, 1)
+st.sidebar.caption("Number of highest-scoring reference images to display.")
+
+num_colors = st.sidebar.slider("Palette size per image", 3, 12, 6, 1)
+st.sidebar.caption("Number of dominant colors extracted from each image for palette comparison.")
+
 resize_refs = st.sidebar.checkbox("Resize reference images to match query", value=True)
+st.sidebar.caption("Ensures structural comparisons are made at matching resolutions.")
 
-st.sidebar.markdown("### Hue / Palette settings")
-hue_bins = st.sidebar.slider("Hue bins", 12, 72, 36, help="How finely the hue circle is divided. More bins = finer hue resolution (slower).")
-sat_thresh = st.sidebar.slider("Saturation mask threshold", 0.0, 1.0, 0.20, 0.01,
-                               help="Pixels with saturation below this are treated as neutral and masked out of hue histograms.")
-val_thresh = st.sidebar.slider("Value mask threshold", 0.0, 1.0, 0.20, 0.01,
-                               help="Pixels with value (brightness) below this are treated as too dark and masked out of hue histograms.")
-hybrid_query_weight = st.sidebar.slider("Hybrid palette: query weight", 0.0, 1.0, 0.60, 0.05,
-                                        help="How much the query palette dominates the Lab blend. 1.0 = query only; 0.0 = reference only.")
+st.sidebar.markdown("---")
 
-st.sidebar.markdown("### What these mean")
-st.sidebar.caption(
-    "**Hue bins**: number of slices around the color wheel used to compare hue distributions.\n\n"
-    "**Saturation mask threshold**: filters out low-saturation (nearly gray) pixels before hue comparison.\n\n"
-    "**Value mask threshold**: filters out very dark pixels before hue comparison.\n\n"
-    "**Hybrid palette: query weight**: how heavily the query colors influence the weighted Lab blend."
-)
+hue_bins = st.sidebar.slider("Hue bins (distribution metric)", 12, 72, 36, 6)
+st.sidebar.caption("""
+Determines how finely the hue wheel is divided.  
+Higher values = more sensitive to subtle hue differences.  
+Lower values = broader grouping of color families.
+""")
+
+sat_threshold = st.sidebar.slider("Saturation mask threshold", 0.0, 1.0, 0.15, 0.05)
+st.sidebar.caption("""
+Pixels with saturation below this value are excluded from hue analysis.  
+Use to avoid noise from grayscale or muted regions.
+""")
+
+val_threshold = st.sidebar.slider("Value mask threshold", 0.0, 1.0, 0.15, 0.05)
+st.sidebar.caption("""
+Pixels below this brightness level are excluded from hue analysis.  
+Helps prevent shadows/dark regions from distorting hue measurements.
+""")
+
+st.sidebar.markdown("---")
+
+hybrid_query_weight = st.sidebar.slider("Hybrid palette: query weight", 0.5, 0.9, 0.7, 0.05)
+st.sidebar.caption("""
+Controls how strongly the query image influences the Weighted Hybrid palette.  
+Higher values = palette shifts toward the query's dominant colors.  
+Lower values = more balanced blend between query and reference palettes.
+""")
 
 # ---------------------------
 # Utility functions
