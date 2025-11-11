@@ -311,14 +311,18 @@ if uploaded_zip and query_file:
             if ref is None: continue
             ref_analysis = analysis_resize(ref, 512)
 
-            metrics = {
-                "Structural Alignment": structural_similarity_metric(query_analysis, ref_analysis),
-                "Color Histogram": color_hist_similarity(query_img, ref),
-                "Entropy Similarity": entropy_similarity(query_img, ref),
-                "Edge Complexity": edge_complexity_similarity(query_analysis, ref_analysis),
-                "Texture Correlation": texture_correlation_similarity(query_analysis, ref_analysis),
-                "Hue Distribution": hue_distribution_similarity(query_img, ref, hue_bins, sat_thresh, val_thresh),
-            }
+            # Always use resized versions for structure-based metrics
+qa = query_analysis
+ra = ref_analysis
+
+metrics = {
+    "Structural Alignment": structural_similarity_metric(qa, ra),
+    "Color Histogram": color_hist_similarity(query_img, ref),
+    "Entropy Similarity": entropy_similarity(query_img, ref),
+    "Edge Complexity": edge_complexity_similarity(qa, ra),
+    "Texture Correlation": texture_correlation_similarity(qa, ra),
+    "Hue Distribution": hue_distribution_similarity(query_img, ref, hue_bins, sat_thresh, val_thresh),
+}
             score = float(np.mean(list(metrics.values())))
             results.append((p, ref, metrics, score))
 
