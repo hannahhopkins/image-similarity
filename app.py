@@ -323,7 +323,7 @@ metrics = {
     "Texture Correlation": texture_correlation_similarity(qa, ra),
     "Hue Distribution": hue_distribution_similarity(query_img, ref, hue_bins, sat_thresh, val_thresh),
 }
-            score = float(np.mean(list(metrics.values())))
+        score = float(np.mean(list(metrics.values())))
             results.append((p, ref, metrics, score))
 
         results.sort(key=lambda x:x[3], reverse=True)
