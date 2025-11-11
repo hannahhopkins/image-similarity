@@ -303,3 +303,4 @@ if ref_zip and qry:
             st.caption("Weighted perceptual blend based on the query/reference balance selected.")
 
         st.markdown("<hr style='border:none;border-top:1px solid #ccc;margin:1rem 0;'>", unsafe_allow_html=True)
+        
