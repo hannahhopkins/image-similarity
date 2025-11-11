@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import streamlit as st
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 import cv2
 from skimage.metrics import structural_similarity as ssim
 from skimage.feature import graycomatrix, graycoprops
@@ -44,9 +44,20 @@ st.sidebar.caption("Number of dominant colors extracted for palette visualizatio
 st.sidebar.markdown("---")
 st.sidebar.subheader("Hue Similarity Settings")
 
-hue_bins = st.sidebar.slider("Hue bins (granularity)", 12, 72, 36, step=6)
-sat_thresh = st.sidebar.slider("Saturation threshold (0–1)", 0.0, 1.0, 0.15, step=0.01)
-val_thresh = st.sidebar.slider("Brightness threshold (0–1)", 0.0, 1.0, 0.15, step=0.01)
+hue_bins = st.sidebar.slider(
+    f"Hue bins (granularity) {info_icon('Controls how finely the color wheel is divided. Higher = more subtle hue distinctions; lower = broader color groupings.')}",
+    12, 72, 36, step=6
+)
+
+sat_thresh = st.sidebar.slider(
+    f"Saturation threshold (0–1) {info_icon('Pixels below this saturation are treated as neutral and ignored in hue comparison. This prevents gray / washed-out areas from influencing hue similarity.')}",
+    0.0, 1.0, 0.15, step=0.01
+)
+
+val_thresh = st.sidebar.slider(
+    f"Brightness threshold (0–1) {info_icon('Pixels below this brightness are ignored to remove shadows from hue analysis. This prevents lighting differences from affecting hue similarity.')}",
+    0.0, 1.0, 0.15, step=0.01
+)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Hybrid Palette Weight")
@@ -71,7 +82,7 @@ def iter_zip_images(folder):
         for f in files:
             if f.startswith("._"):
                 continue
-            if Path(f).suffix.lower() in (".jpg", ".jpeg", ".png"):
+            if Path(f).lower().suffix in (".jpg", ".jpeg", ".png"):
                 yield os.path.join(root, f)
 
 
@@ -81,13 +92,18 @@ def analysis_resize(pil_img, target=512):
     return pil_img.resize((int(w*scale), int(h*scale)), Image.LANCZOS)
 
 
+# Always ensure structural metrics use same size images
+def to_structural(img):
+    return analysis_resize(img, 512)
+
+
 # -----------------------------------------------------------------------------
 # Palette Extraction
 # -----------------------------------------------------------------------------
 def kmeans_palette(pil_img, k):
     arr = np.array(pil_img)
     flat = arr.reshape(-1, 3).astype(np.float32)
-    k_eff = min(k, max(1, flat.shape[0]//200))
+    k_eff = min(k, max(1, flat.shape[0] // 200))
     km = KMeans(n_clusters=k_eff, n_init=10, random_state=0).fit(flat)
     centers = km.cluster_centers_
     labels = km.labels_
@@ -98,7 +114,7 @@ def kmeans_palette(pil_img, k):
         pad = np.tile(np.mean(flat, axis=0), (k - centers.shape[0], 1))
         centers = np.vstack([centers, pad])
     centers = np.clip(centers, 0, 255).astype(np.uint8)
-    return [tuple(map(int,c)) for c in centers[:k]]
+    return [tuple(int(x) for x in c) for c in centers[:k]]
 
 
 # -----------------------------------------------------------------------------
@@ -106,27 +122,27 @@ def kmeans_palette(pil_img, k):
 # -----------------------------------------------------------------------------
 def rgb_to_hsv01(arr_uint8):
     hsv = cv2.cvtColor(arr_uint8, cv2.COLOR_RGB2HSV).astype(np.float32)
-    hsv[...,0] /= 179.0
-    hsv[...,1] /= 255.0
-    hsv[...,2] /= 255.0
+    hsv[..., 0] /= 179.0
+    hsv[..., 1] /= 255.0
+    hsv[..., 2] /= 255.0
     return hsv
 
 
 def hue_histogram(pil_img, bins, s_thr, v_thr):
     arr = np.array(pil_img)
     hsv = rgb_to_hsv01(arr)
-    H, S, V = hsv[...,0], hsv[...,1], hsv[...,2]
+    H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
     mask = (S >= s_thr) & (V >= v_thr)
     if not np.any(mask):
         return np.ones(bins) / bins
-    hist, _ = np.histogram(H[mask], bins=bins, range=(0,1))
+    hist, _ = np.histogram(H[mask], bins=bins, range=(0, 1))
     hist = hist.astype(np.float32)
-    hist = hist / hist.sum() if hist.sum() > 0 else np.ones(bins)/bins
+    hist = hist / hist.sum() if hist.sum() > 0 else np.ones(bins) / bins
     return hist
 
 
 # -----------------------------------------------------------------------------
-# Similarity Metrics (Size Independent)
+# Similarity Metrics
 # -----------------------------------------------------------------------------
 def structural_similarity_metric(a, b):
     a = cv2.cvtColor(np.array(a), cv2.COLOR_RGB2GRAY)
@@ -136,28 +152,31 @@ def structural_similarity_metric(a, b):
 
 
 def color_hist_similarity(a, b):
-    a = np.array(a); b = np.array(b)
-    h1 = cv2.calcHist([a],[0,1,2],None,[8,8,8],[0,256]*3)
-    h2 = cv2.calcHist([b],[0,1,2],None,[8,8,8],[0,256]*3)
-    cv2.normalize(h1,h1); cv2.normalize(h2,h2)
+    a = np.array(a)
+    b = np.array(b)
+    h1 = cv2.calcHist([a], [0, 1, 2], None, [8, 8, 8], [0, 256]*3)
+    h2 = cv2.calcHist([b], [0, 1, 2], None, [8, 8, 8], [0, 256]*3)
+    cv2.normalize(h1, h1)
+    cv2.normalize(h2, h2)
     raw = cv2.compareHist(h1.astype(np.float32), h2.astype(np.float32), cv2.HISTCMP_CORREL)
-    return float(np.clip((raw+1)/2, 0, 1))
+    return float(np.clip((raw + 1) / 2, 0, 1))
 
 
 def entropy_similarity(a, b):
     def ent(pil):
         g = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2GRAY)
-        hist = cv2.calcHist([g],[0],None,[256],[0,256]).astype(np.float32)
-        p = hist / (hist.sum()+1e-8)
-        return float(-np.sum(p*np.log2(p+1e-12)))
-    e1, e2 = ent(a), ent(b)
-    return float(np.clip(1 - abs(e1-e2)/max(e1,e2,1e-6),0,1))
+        hist = cv2.calcHist([g], [0], None, [256], [0, 256]).astype(np.float32)
+        p = hist / (hist.sum() + 1e-8)
+        return float(-np.sum(p * np.log2(p + 1e-12)))
+    e1 = ent(a)
+    e2 = ent(b)
+    return float(np.clip(1 - abs(e1-e2)/max(e1,e2,1e-6), 0, 1))
 
 
 def edge_complexity_similarity(a, b):
     def ed(pil):
         g = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2GRAY)
-        e = cv2.Canny(g,100,200)
+        e = cv2.Canny(g, 100, 200)
         return float(e.mean()/255.0)
     return float(np.clip(1 - abs(ed(a)-ed(b)), 0, 1))
 
@@ -166,8 +185,9 @@ def texture_correlation_similarity(a, b):
     def tex(pil):
         g = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2GRAY)
         gl = graycomatrix(g, [2], [0], symmetric=True, normed=True)
-        return float(graycoprops(gl,'energy')[0,0])
-    e1, e2 = tex(a), tex(b)
+        return float(graycoprops(gl, 'energy')[0, 0])
+    e1 = tex(a)
+    e2 = tex(b)
     return float(np.clip(1 - abs(e1-e2)/max(e1,e2,1e-6), 0, 1))
 
 
@@ -185,10 +205,10 @@ def lab_midpoint_palette(q_cols, r_cols, n):
     out=[]
     for qc in q_cols[:n]:
         rc = min(r_cols, key=lambda x: np.linalg.norm(np.array(x)-np.array(qc)))
-        qlab=cv2.cvtColor(np.uint8([[qc]]),cv2.COLOR_RGB2LAB).astype(np.float32)
-        rlab=cv2.cvtColor(np.uint8([[rc]]),cv2.COLOR_RGB2LAB).astype(np.float32)
+        qlab=cv2.cvtColor(np.uint8([[qc]]), cv2.COLOR_RGB2LAB).astype(np.float32)
+        rlab=cv2.cvtColor(np.uint8([[rc]]), cv2.COLOR_RGB2LAB).astype(np.float32)
         mid=(qlab+rlab)/2
-        rgb=cv2.cvtColor(mid.astype(np.uint8),cv2.COLOR_LAB2RGB)[0,0]
+        rgb=cv2.cvtColor(mid.astype(np.uint8), cv2.COLOR_LAB2RGB)[0,0]
         out.append(tuple(int(x) for x in rgb))
     return out
 
@@ -214,10 +234,10 @@ def weighted_hybrid_palette(q_cols, r_cols, n, w):
     out=[]
     for qc in q_cols[:n]:
         rc = min(r_cols, key=lambda x: np.linalg.norm(np.array(x)-np.array(qc)))
-        qlab=cv2.cvtColor(np.uint8([[qc]]),cv2.COLOR_RGB2LAB).astype(np.float32)
-        rlab=cv2.cvtColor(np.uint8([[rc]]),cv2.COLOR_RGB2LAB).astype(np.float32)
+        qlab=cv2.cvtColor(np.uint8([[qc]]), cv2.COLOR_RGB2LAB).astype(np.float32)
+        rlab=cv2.cvtColor(np.uint8([[rc]]), cv2.COLOR_RGB2LAB).astype(np.float32)
         blend=qlab*w+rlab*(1-w)
-        rgb=cv2.cvtColor(blend.astype(np.uint8),cv2.COLOR_LAB2RGB)[0,0]
+        rgb=cv2.cvtColor(blend.astype(np.uint8), cv2.COLOR_LAB2RGB)[0,0]
         out.append(tuple(int(x) for x in rgb))
     return out
 
@@ -297,20 +317,15 @@ if uploaded_zip and query_file:
             st.error("Could not open query image.")
             st.stop()
 
-        # Create analysis copies for structural metrics only
-        query_analysis = analysis_resize(query_img, 512)
-
         results=[]
         for p in ref_paths:
             ref = safe_open_image(p)
-            if ref is None: 
+            if ref is None:
                 continue
 
-            # Resized copy for structural comparisons
-            ref_analysis = analysis_resize(ref, 512)
-
-            # All structural metrics use the resized versions
-            qa, ra = query_analysis, ref_analysis
+            # Enforce consistent spatial size for structural metrics
+            qa = to_structural(query_img)
+            ra = to_structural(ref)
 
             metrics = {
                 "Structural Alignment": structural_similarity_metric(qa, ra),
