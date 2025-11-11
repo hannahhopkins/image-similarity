@@ -45,13 +45,8 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Hue Similarity Settings")
 
 hue_bins = st.sidebar.slider("Hue bins (granularity)", 12, 72, 36, step=6)
-st.sidebar.caption("Higher = finer hue distinction. Lower = broader grouping.")
-
 sat_thresh = st.sidebar.slider("Saturation threshold (0–1)", 0.0, 1.0, 0.15, step=0.01)
-st.sidebar.caption("Pixels below this saturation are ignored for hue analysis.")
-
 val_thresh = st.sidebar.slider("Brightness threshold (0–1)", 0.0, 1.0, 0.15, step=0.01)
-st.sidebar.caption("Pixels below this brightness are ignored to remove noise & shadows.")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Hybrid Palette Weight")
@@ -199,7 +194,6 @@ def lab_midpoint_palette(q_cols, r_cols, n):
 
 
 def shared_hue_palette(q_img, r_img, n, bins, s_thr, v_thr):
-    arr_q, arr_r = np.array(q_img), np.array(r_img)
     hq = hue_histogram(q_img, bins, s_thr, v_thr)
     hr = hue_histogram(r_img, bins, s_thr, v_thr)
     score = hq * hr + 1e-9
@@ -251,11 +245,11 @@ def metric_bar_chart(metrics, key):
 
     metric_info = {
         "Structural Alignment": "Similarity in tonal structure & spatial composition.",
-        "Color Histogram": "Similarity in overall color distribution.",
-        "Entropy Similarity": "Similarity in visual complexity / fine detail density.",
-        "Edge Complexity": "Similarity in contour sharpness and frequency of edges.",
+        "Color Histogram": "Similarity in global color distribution.",
+        "Entropy Similarity": "Similarity in visual detail density.",
+        "Edge Complexity": "Similarity in sharpness and contour frequency.",
         "Texture Correlation": "Similarity in surface micro-patterns.",
-        "Hue Distribution": "Similarity in dominant hue families (after masking neutrals)."
+        "Hue Distribution": "Similarity in dominant hue families once shadows & neutrals are excluded."
     }
 
     hover = [metric_info[n] for n in names]
@@ -303,27 +297,31 @@ if uploaded_zip and query_file:
             st.error("Could not open query image.")
             st.stop()
 
+        # Create analysis copies for structural metrics only
         query_analysis = analysis_resize(query_img, 512)
 
         results=[]
         for p in ref_paths:
             ref = safe_open_image(p)
-            if ref is None: continue
+            if ref is None: 
+                continue
+
+            # Resized copy for structural comparisons
             ref_analysis = analysis_resize(ref, 512)
 
-            # Always use resized versions for structure-based metrics
-qa = query_analysis
-ra = ref_analysis
+            # All structural metrics use the resized versions
+            qa, ra = query_analysis, ref_analysis
 
-metrics = {
-    "Structural Alignment": structural_similarity_metric(qa, ra),
-    "Color Histogram": color_hist_similarity(query_img, ref),
-    "Entropy Similarity": entropy_similarity(query_img, ref),
-    "Edge Complexity": edge_complexity_similarity(qa, ra),
-    "Texture Correlation": texture_correlation_similarity(qa, ra),
-    "Hue Distribution": hue_distribution_similarity(query_img, ref, hue_bins, sat_thresh, val_thresh),
-}
-        score = float(np.mean(list(metrics.values())))
+            metrics = {
+                "Structural Alignment": structural_similarity_metric(qa, ra),
+                "Color Histogram": color_hist_similarity(query_img, ref),
+                "Entropy Similarity": entropy_similarity(query_img, ref),
+                "Edge Complexity": edge_complexity_similarity(qa, ra),
+                "Texture Correlation": texture_correlation_similarity(qa, ra),
+                "Hue Distribution": hue_distribution_similarity(query_img, ref, hue_bins, sat_thresh, val_thresh),
+            }
+
+            score = float(np.mean(list(metrics.values())))
             results.append((p, ref, metrics, score))
 
         results.sort(key=lambda x:x[3], reverse=True)
@@ -342,23 +340,23 @@ metrics = {
                 with st.expander("Metric Explanations", expanded=False):
                     st.markdown(
                         """
-                        **Structural Alignment**  
-                        How similarly the images distribute tone and spatial emphasis.
+                        Structural Alignment  
+                        Measures how similarly the images distribute tonal contrast and spatial composition.
 
-                        **Color Histogram**  
-                        Whether the same colors appear in similar proportions.
+                        Color Histogram  
+                        Compares the relative presence of color values throughout the image.
 
-                        **Entropy Similarity**  
-                        Whether the images contain comparable levels of visual detail.
+                        Entropy Similarity  
+                        Indicates whether the images have comparable levels of visual complexity.
 
-                        **Edge Complexity**  
-                        Whether the images have similar density of visual edges or contours.
+                        Edge Complexity  
+                        Compares the density and sharpness of contour boundaries.
 
-                        **Texture Correlation**  
-                        Whether surface patterns (fine grain, brushwork, fabric texture) align.
+                        Texture Correlation  
+                        Measures similarity of fine-scale surface structure and patterning.
 
-                        **Hue Distribution**  
-                        Whether the same color families dominate once neutrals & shadows are filtered out.
+                        Hue Distribution  
+                        Compares dominant hue families after excluding neutrals and low-light regions.
                         """
                     )
 
@@ -371,13 +369,13 @@ metrics = {
                 hybrid = weighted_hybrid_palette(q_cols, r_cols, min(num_colors,6), hybrid_query_weight)
 
                 st.markdown(
-                    f"Blended Midpoint {info_icon('Shows perceptual mid-blend where the two palettes converge.')}",
+                    f"Blended Midpoint {info_icon('Perceptual mid-blend where the two palettes converge.')}",
                     unsafe_allow_html=True
                 )
                 plotly_palette(mid, f"mid_{idx}")
 
                 st.markdown(
-                    f"Shared Hue Regions {info_icon('Shows hue families strongly expressed in both images.')}",
+                    f"Shared Hue Regions {info_icon('Hue families strongly expressed in both images.')}",
                     unsafe_allow_html=True
                 )
                 plotly_palette(shared, f"shared_{idx}")
